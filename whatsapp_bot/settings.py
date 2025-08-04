@@ -169,3 +169,5 @@ WHATSAPP_ACCESS_TOKEN = os.getenv("WHATSAPP_ACCESS_TOKEN", "default_access_token
 WHATSAPP_WEBHOOK_URL = os.getenv(
     "WHATSAPP_WEBHOOK_URL", "http://localhost:8000/whatsapp/webhook/"
 )
+
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")

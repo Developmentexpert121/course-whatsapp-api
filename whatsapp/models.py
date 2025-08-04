@@ -55,6 +55,32 @@ class WhatsappUser(models.Model):
     onboarding_step = models.PositiveSmallIntegerField(default=0)
     onboarding_completed_at = models.DateTimeField(null=True, blank=True)
 
+    # Orientation tracking
+    orientation_status = models.CharField(
+        max_length=20,
+        choices=[
+            ("not_started", "Not Started"),
+            ("started", "Started"),
+            ("completed", "Completed"),
+            ("restarted", "Restarted"),
+        ],
+        default="not_started",
+    )
+    orientation_step = models.PositiveSmallIntegerField(default=0)
+    orientation_completed_at = models.DateTimeField(null=True, blank=True)
+
+    shared_courses_list = models.ManyToManyField(
+        Course, blank=True, related_name="shared_with_users"
+    )
+
+    active_enrollment = models.ForeignKey(
+        "UserEnrollment",
+        on_delete=models.CASCADE,
+        related_name="active_enrollment",
+        blank=True,
+        null=True,
+    )
+
     age = models.PositiveIntegerField(blank=True, null=True)
     gender = models.CharField(
         max_length=20, choices=GENDER_CHOICES, blank=True, null=True

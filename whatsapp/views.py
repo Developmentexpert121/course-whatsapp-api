@@ -8,7 +8,8 @@ from django.views.decorators.csrf import csrf_exempt
 from django.utils.decorators import method_decorator
 from .services.user import WhatsappUserService
 from .services.messaging import WhatsAppService
-from .services.onboarding import OnboardingManager
+from .services.onboarding_manager import OnboardingManager
+from .services.orientation_manager import OrientationManager
 from .models import WhatsappUser
 
 import asyncio
@@ -86,7 +87,6 @@ class WhatsAppWebhookView(APIView):
 
                 if user and user.onboarding_status in ["started", "restarted"]:
                     # Process onboarding response
-
                     OnboardingManager.process_response(
                         phone_number_id=phone_number_id,
                         user_waid=from_number,
@@ -100,10 +100,18 @@ class WhatsAppWebhookView(APIView):
                         whatsapp_name=whatsapp_name,
                     )
 
-                else:
+                elif (
+                    user.onboarding_status == "completed"
+                    and user.orientation_status != "completed"
+                ):
                     # will send other messages reply here
-                    x = False
-                    print("will apply orientation here")
+                    OrientationManager.handle_orientation_response(
+                        phone_number_id=phone_number_id,
+                        user_input=message_body,
+                        user_waid=from_number,
+                    )
+                else:
+                    print("Here we deliver courses")
 
                 return Response({"success": True}, status=status.HTTP_200_OK)
 

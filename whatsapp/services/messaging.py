@@ -17,9 +17,21 @@ class WhatsAppService:
             if not access_token:
                 raise ValueError("WHATSAPP_ACCESS_TOKEN not configured")
 
+            print(
+                "Whatsapp message payload: ",
+                {
+                    "messaging_product": "whatsapp",
+                    "recipient_type": "individual",
+                    "to": to,
+                    "type": "text",
+                    "text": {"body": message},
+                },
+            )
+            print("Sending to WhatsApp:", message)
+
             async with httpx.AsyncClient(timeout=30.0) as client:
                 response = await client.post(
-                    f"https://graph.facebook.com/v18.0/{phone_number_id}/messages",
+                    f"https://graph.facebook.com/v22.0/{phone_number_id}/messages",
                     json={
                         "messaging_product": "whatsapp",
                         "recipient_type": "individual",
@@ -35,6 +47,7 @@ class WhatsAppService:
                 response.raise_for_status()
                 return response
         except Exception as e:
+            print("Error sending WhatsApp message:", e)
             logger.exception("Error sending WhatsApp message")
             raise
 

@@ -1,8 +1,12 @@
 import logging
+import os
 import httpx
 from whatsapp.models import WhatsappUser
 from django.utils import timezone
+
+from whatsapp.services.ai_reponse_interpreter import AIResponseInterpreter
 from .messaging import WhatsAppService
+from .orientation_manager import OrientationManager
 
 logger = logging.getLogger(__name__)
 
@@ -14,6 +18,8 @@ class OnboardingManager:
         {"question": "What is your full name?", "property": "full_name"},
         {"question": "What is your email address?", "property": "email"},
     ]
+
+    interpreter = AIResponseInterpreter(api_key=os.getenv("OPENAI_API_KEY"))
 
     @classmethod
     def start_onboarding(
@@ -33,11 +39,6 @@ class OnboardingManager:
                 },
             )
 
-            if not created:
-                user.onboarding_status = "restarted"
-                user.onboarding_step = 0
-                user.save()
-
             # Send welcome message
             welcome_msg = (
                 "Welcome to WAppStudy! 🎓\n\n"
@@ -45,9 +46,14 @@ class OnboardingManager:
                 f"1. {cls.ONBOARDING_QUESTIONS[0]['question']}"
             )
 
-            return WhatsAppService.send_message(
+            WhatsAppService.send_message(
                 phone_number_id=phone_number_id, to=user_waid, message=welcome_msg
             )
+
+            if not created:
+                user.onboarding_status = "restarted"
+                user.onboarding_step = 0
+                user.save()
 
         except Exception as e:
             logger.exception(f"Failed to start onboarding for {user_waid}")
@@ -66,24 +72,38 @@ class OnboardingManager:
                 return cls._complete_onboarding(phone_number_id, user_waid)
 
             # Save response to user profile
-            property_name = cls.ONBOARDING_QUESTIONS[current_step]["property"]
-            setattr(user, property_name, user_response.strip())
-            user.onboarding_step += 1
-            user.save()
+            question = cls.ONBOARDING_QUESTIONS[current_step]["question"]
 
-            # Send next question or completion
-            if user.onboarding_step < len(cls.ONBOARDING_QUESTIONS):
-                next_question = cls.ONBOARDING_QUESTIONS[user.onboarding_step][
-                    "question"
-                ]
-                question_num = user.onboarding_step + 1
-                message = f"{question_num}. {next_question}"
-            else:
-                return cls._complete_onboarding(phone_number_id, user_waid)
-
-            return WhatsAppService.send_message(
-                phone_number_id=phone_number_id, to=user_waid, message=message
+            result = cls.interpreter.extract_answer(
+                question=question,
+                response=user_response.strip(),
+                environment_context="User is currently answering onboarding phase questions. Kindly validate the reponses also",
             )
+            if result["answer"]:
+                property_name = cls.ONBOARDING_QUESTIONS[current_step]["property"]
+                setattr(user, property_name, result["answer"])
+                user.onboarding_step += 1
+                user.save()
+
+                # Send next question or completion
+                if user.onboarding_step < len(cls.ONBOARDING_QUESTIONS):
+                    next_question = cls.ONBOARDING_QUESTIONS[user.onboarding_step][
+                        "question"
+                    ]
+                    question_num = user.onboarding_step + 1
+                    message = f"{question_num}. {next_question}"
+                else:
+                    return cls._complete_onboarding(phone_number_id, user_waid)
+
+                return WhatsAppService.send_message(
+                    phone_number_id=phone_number_id, to=user_waid, message=message
+                )
+            else:
+                return WhatsAppService.send_message(
+                    phone_number_id=phone_number_id,
+                    to=user_waid,
+                    message=result["message_to_user"],
+                )
 
         except WhatsappUser.DoesNotExist:
             logger.error(f"User {user_waid} not found for onboarding")
@@ -100,6 +120,7 @@ class OnboardingManager:
         user = WhatsappUser.objects.get(whatsapp_id=user_waid)
         user.onboarding_status = "completed"
         user.onboarding_completed_at = timezone.now()
+
         user.save()
 
         completion_msg = (
@@ -108,6 +129,8 @@ class OnboardingManager:
             "Type 'HELP' anytime for assistance."
         )
 
-        return WhatsAppService.send_message(
+        WhatsAppService.send_message(
             phone_number_id=phone_number_id, to=user_waid, message=completion_msg
         )
+
+        return OrientationManager.start_orientation(phone_number_id, user.whatsapp_id)
