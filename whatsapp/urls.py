@@ -1,5 +1,11 @@
 from django.urls import path
-from .views import WhatsAppWebhookView, WhatsAppUserView, WhatsAppUserListView, home
+from .views import (
+    AssessmentAttempts,
+    WhatsAppWebhookView,
+    WhatsAppUserView,
+    WhatsAppUserListView,
+    home,
+)
 
 urlpatterns = [
     path("", home, name="home"),
@@ -9,6 +15,11 @@ urlpatterns = [
     path(
         "users/<str:whatsapp_id>/",
         WhatsAppUserView.as_view(),
+        name="whatsapp_users_GET_PUT_DELETE",
+    ),
+    path(
+        "assessments/<str:user_id>/",
+        AssessmentAttempts.as_view(),
         name="whatsapp_users_GET_PUT_DELETE",
     ),
 ]

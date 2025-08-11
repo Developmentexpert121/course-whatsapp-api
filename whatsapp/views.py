@@ -6,11 +6,19 @@ from rest_framework import status
 from django.utils.timezone import now
 from django.views.decorators.csrf import csrf_exempt
 from django.utils.decorators import method_decorator
+
+from whatsapp.serializers import (
+    UserAssessmentAttemptSerializer,
+    UserEnrollmentSerializer,
+    WhatsappUserSerializer,
+)
+from whatsapp.services.assessment_service import UserAssessmentService
+from whatsapp.services.course_delivery_manager import CourseDeliveryManager
 from .services.user import WhatsappUserService
 from .services.messaging import WhatsAppService
 from .services.onboarding_manager import OnboardingManager
 from .services.orientation_manager import OrientationManager
-from .models import WhatsappUser
+from .models import UserAssessmentAttempt, UserEnrollment, WhatsappUser
 
 import asyncio
 import httpx
@@ -111,7 +119,12 @@ class WhatsAppWebhookView(APIView):
                         user_waid=from_number,
                     )
                 else:
-                    print("Here we deliver courses")
+                    delivery_manager = CourseDeliveryManager(
+                        phone_number_id=phone_number_id
+                    )
+                    delivery_manager.process_user_message(
+                        user_waid=from_number, user_input=message_body
+                    )
 
                 return Response({"success": True}, status=status.HTTP_200_OK)
 
@@ -176,23 +189,38 @@ class WhatsAppUserView(APIView):
             )
 
     def get(self, request, whatsapp_id):
-        """Retrieve a WhatsApp user by ID"""
+        """Retrieve a WhatsApp user by ID, including enrolledCourses"""
         try:
-            user = WhatsappUserService.get_user(whatsapp_id)
-            if user and user.get("success"):
-                return Response(
-                    {
-                        "success": True,
-                        "message": "User fetched successfully",
-                        "data": user.get("data"),
-                    },
-                    status=status.HTTP_200_OK,
-                )
-            else:
-                raise Exception(user.get("error"))
+            user = WhatsappUser.objects.get(whatsapp_id=whatsapp_id)
+
+            # Get all enrollments for this user
+            enrollments = UserEnrollment.objects.filter(user=user)
+            enrollment_data = UserEnrollmentSerializer(enrollments, many=True).data
+
+            # Fetch test results
+            assessment_attempts = UserAssessmentAttempt.objects.filter(user=user)
+            test_results = UserAssessmentAttemptSerializer(
+                assessment_attempts, many=True
+            ).data
+            # Serialize user
+            user_data = WhatsappUserSerializer(user).data
+
+            # Add the enrolledCourses field manually
+            user_data["enrolledCourses"] = enrollment_data
+            user_data["testResults"] = test_results
+
+            return Response(
+                {
+                    "success": True,
+                    "message": "User fetched successfully",
+                    "data": user_data,
+                },
+                status=status.HTTP_200_OK,
+            )
         except WhatsappUser.DoesNotExist:
             return Response(
-                {"error": "User not found"}, status=status.HTTP_404_NOT_FOUND
+                {"success": False, "error": "User not found"},
+                status=status.HTTP_404_NOT_FOUND,
             )
 
     def put(self, request, whatsapp_id):
@@ -245,22 +273,51 @@ class WhatsAppUserListView(APIView):
     """API view for listing all WhatsApp users"""
 
     def get(self, request):
-        """Retrieve all WhatsApp users"""
+        """Retrieve all WhatsApp users with enrolled courses and test results"""
         try:
             users = WhatsappUserService.get_all_users()
             if users and users.get("success"):
+                user_data = users.get("data")
+                enriched_users = []
+
+                for user in user_data:
+                    user_id = user.get("id")
+                    # Fetch enrolled courses
+                    enrollments = UserEnrollment.objects.filter(user_id=user_id)
+                    enrolled_courses = UserEnrollmentSerializer(
+                        enrollments, many=True
+                    ).data
+
+                    # Fetch test results
+                    assessment_attempts = UserAssessmentAttempt.objects.filter(
+                        user_id=user_id
+                    )
+                    test_results = UserAssessmentAttemptSerializer(
+                        assessment_attempts, many=True
+                    ).data
+
+                    # Append enriched data
+                    enriched_users.append(
+                        {
+                            **user,
+                            "enrolled_courses": enrolled_courses,
+                            "test_results": test_results,
+                        }
+                    )
+
                 return Response(
                     {
                         "success": True,
-                        "message": "Users list fetched successfully",
-                        "data": users.get("data"),
+                        "message": "Users list fetched successfully with course and test data",
+                        "data": enriched_users,
                     },
                     status=status.HTTP_200_OK,
                 )
+
             else:
                 raise Exception(users.get("error"))
         except Exception as e:
-            logger.exception("Error retrieving users")
+            logger.exception("Error retrieving users with enriched data")
             return Response(
                 {"error": "Internal server error"},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -291,5 +348,56 @@ class WhatsAppUserListView(APIView):
             logger.exception("Error deleting users in bulk")
             return Response(
                 {"error": "Internal server error"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+
+@method_decorator(csrf_exempt, name="dispatch")
+class AssessmentAttempts(APIView):
+    """Assessment Attempts API View"""
+
+    permission_classes = []
+    authentication_classes = []
+
+    def get(self, request, user_id):
+        """Get assessment attempts for a user"""
+        try:
+            assessment_attempts = UserAssessmentService.get_user_assessments(user_id)
+
+            if assessment_attempts["success"]:
+                return Response(
+                    {
+                        "success": True,
+                        "message": "Assessment attempts fetched successfully",
+                        "data": assessment_attempts["data"],
+                    },
+                    status=status.HTTP_200_OK,
+                )
+            else:
+                return Response(
+                    {
+                        "success": False,
+                        "error": assessment_attempts["error"]
+                        | "No assessment attempts found for the user",
+                    },
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+
+        except WhatsappUser.DoesNotExist:
+            return Response(
+                {
+                    "success": False,
+                    "error": "User not found",
+                },
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        except Exception as e:
+            return Response(
+                {
+                    "success": False,
+                    "error": "An error occurred while fetching assessment attempts",
+                    "details": str(e),
+                },
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )

@@ -91,16 +91,57 @@ class CourseService:
 
     @classmethod
     def update_course_status(cls, course_id, is_active):
-        """Update course status"""
+        """Update course status with activation validation"""
         try:
             course = Course.objects.get(course_id=course_id)
+
+            if is_active:
+                # --- Rule 1: Must have at least one module ---
+                modules = course.modules.all()
+                if not modules.exists():
+                    return {
+                        "success": False,
+                        "error": "Cannot activate course: At least one module is required.",
+                    }
+
+                # --- Rule 2: Each module must have one active assessment and one active quiz ---
+                pending_modules = []
+
+                for module in modules:
+                    missing_items = []
+
+                    if not module.assessments.filter(
+                        is_active=True, type="assessment"
+                    ).exists():
+                        missing_items.append("active assessment")
+
+                    if not module.assessments.filter(
+                        is_active=True, type="quiz"
+                    ).exists():
+                        missing_items.append("active quiz")
+
+                    if missing_items:
+                        pending_modules.append(
+                            f"Module '{module.title}' is missing: {', '.join(missing_items)}"
+                        )
+
+                if pending_modules:
+                    return {
+                        "success": False,
+                        "error": "Cannot activate course due to the following issues:\n"
+                        + "\n".join(pending_modules),
+                    }
+
+            # If all validations pass or course is being deactivated
             course.is_active = is_active
             course.save()
+
             return {
                 "success": True,
                 "data": cls.to_dict(course),
                 "message": "Course status updated successfully",
             }
+
         except Course.DoesNotExist:
             return {"success": False, "error": "Course not found"}
         except Exception as e:

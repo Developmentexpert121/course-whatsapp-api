@@ -97,6 +97,9 @@ class AssessmentQuestion(models.Model):
     question_text = models.TextField()
     marks = models.FloatField()
     options = models.JSONField(blank=True, null=True)  # Only for MCQ type
+    correct_answer = models.TextField(
+        blank=True, null=True
+    )  # TODO: Need to implement this for open in frontend
 
     def __str__(self):
         return self.question_text

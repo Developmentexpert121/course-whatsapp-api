@@ -17,17 +17,17 @@ class WhatsAppService:
             if not access_token:
                 raise ValueError("WHATSAPP_ACCESS_TOKEN not configured")
 
-            print(
-                "Whatsapp message payload: ",
-                {
-                    "messaging_product": "whatsapp",
-                    "recipient_type": "individual",
-                    "to": to,
-                    "type": "text",
-                    "text": {"body": message},
-                },
-            )
-            print("Sending to WhatsApp:", message)
+            # print(
+            #     "Whatsapp message payload: ",
+            #     {
+            #         "messaging_product": "whatsapp",
+            #         "recipient_type": "individual",
+            #         "to": to,
+            #         "type": "text",
+            #         "text": {"body": message},
+            #     },
+            # )
+            print("[Sending to WhatsApp]:", message)
 
             async with httpx.AsyncClient(timeout=30.0) as client:
                 response = await client.post(

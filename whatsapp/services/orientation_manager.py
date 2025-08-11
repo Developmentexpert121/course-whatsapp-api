@@ -5,6 +5,7 @@ from courses.models import Course  # Replace with your actual course model
 from django.utils import timezone
 
 from whatsapp.services.ai_reponse_interpreter import AIResponseInterpreter
+from whatsapp.services.course_delivery_manager import CourseDeliveryManager
 from whatsapp.services.enrollment_service import EnrollmentService
 from .messaging import WhatsAppService
 from typing import Dict
@@ -18,6 +19,9 @@ class OrientationManager:
     HAS_SENT_QUESTION = False
 
     interpreter = AIResponseInterpreter(api_key=os.getenv("OPENAI_API_KEY"))
+    course_delivery_service = CourseDeliveryManager(
+        phone_number_id=os.getenv("WHATSAPP_PHONE_NUMBER_ID")
+    )
 
     # Define orientation steps - can be messages or questions
     ORIENTATION_STEPS = [
@@ -235,6 +239,10 @@ If the user's response is a course name, match it against the list. If matched, 
                 user.orientation_status = "completed"
                 user.shared_courses_list.clear()
                 user.orientation_completed_at = timezone.now()
+                cls.course_delivery_service.welcome_user_to_course(
+                    user_waid=user.whatsapp_id,
+                    enrollment=user.active_enrollment,
+                )
             user.save()
 
     @classmethod

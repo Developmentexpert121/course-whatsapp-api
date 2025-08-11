@@ -23,7 +23,9 @@ class ModuleService:
         """Retrieve all modules or modules for a specific course"""
         try:
             if course_id:
-                modules = Module.objects.filter(course__course_id=course_id)
+                modules = Module.objects.filter(course__course_id=course_id).order_by(
+                    "order"
+                )
             else:
                 modules = Module.objects.all()
             return {

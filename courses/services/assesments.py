@@ -86,20 +86,36 @@ class AssessmentService:
         """Update an existing assessment"""
         try:
             assessment = Assessment.objects.get(assessment_id=assessment_id)
-            # Update assessment fields
-            for field in [
-                "title",
-                "description",
-                "is_active",
-                "type",
-                "course_id",
-                "module_id",
-            ]:
-                if field in data:
-                    setattr(assessment, field, data[field])
+
+            # Field mapping
+            field_map = {
+                "title": "title",
+                "description": "description",
+                "isActive": "is_active",
+                "type": "type",
+                "courseId": "course_id",
+                "moduleId": "module_id",
+            }
+
+            for input_field, model_field in field_map.items():
+                if input_field in data:
+                    setattr(assessment, model_field, data[input_field])
+
+            # Handle activation logic
+            is_being_activated = data.get("isActive", False)
+            assessment_type = data.get("type", assessment.type)
+            module_id = data.get("moduleId") or assessment.module.module_id
+
+            if is_being_activated:
+                Assessment.objects.filter(
+                    module_id=module_id, type=assessment_type
+                ).exclude(assessment_id=assessment.assessment_id).update(
+                    is_active=False
+                )
+
             assessment.save()
 
-            # Optional: replace all questions (simplest path)
+            # Replace questions (if provided)
             if "questions" in data:
                 assessment.questions.all().delete()
                 for q in data["questions"]:
@@ -111,10 +127,13 @@ class AssessmentService:
                         marks=q.get("marks", 0),
                         options=q.get("options") if q.get("type") == "mcq" else None,
                     )
+
             return {
                 "success": True,
                 "data": cls.to_dict(assessment),
+                "message": "Assessment updated successfully",
             }
+
         except ObjectDoesNotExist:
             return {"success": False, "data": None, "error": "Assessment not found"}
         except Exception as e:

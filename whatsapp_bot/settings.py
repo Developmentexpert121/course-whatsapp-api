@@ -171,3 +171,15 @@ WHATSAPP_WEBHOOK_URL = os.getenv(
 )
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+
+REST_FRAMEWORK = {
+    "DEFAULT_RENDERER_CLASSES": (
+        "djangorestframework_camel_case.render.CamelCaseJSONRenderer",  # responses: snake_case → camelCase
+        "rest_framework.renderers.BrowsableAPIRenderer",
+    ),
+    "DEFAULT_PARSER_CLASSES": (
+        "rest_framework.parsers.JSONParser",  # keeps snake_case for incoming
+        "rest_framework.parsers.FormParser",
+        "rest_framework.parsers.MultiPartParser",
+    ),
+}

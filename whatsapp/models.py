@@ -75,7 +75,7 @@ class WhatsappUser(models.Model):
 
     active_enrollment = models.ForeignKey(
         "UserEnrollment",
-        on_delete=models.CASCADE,
+        on_delete=models.SET_NULL,
         related_name="active_enrollment",
         blank=True,
         null=True,
@@ -157,6 +157,19 @@ class UserEnrollment(models.Model):
         related_name="active_enrollment",
     )
 
+    conversation_state = models.CharField(
+        max_length=50,
+        default="idle",  # other states: 'awaiting_user_query', 'offer_quiz_or_content', etc.
+        choices=[
+            ("idle", "Idle"),
+            ("awaiting_user_query", "Awaiting User Query"),
+            ("awaiting_continue_confirmation", "Awaiting Continue Confirmation"),
+            ("offer_quiz_or_content", "Offer Quiz Or Content"),
+            ("in_assessment", "In Assessment"),
+            ("course_complete", "Course Complete"),
+        ],
+    )
+
     class Meta:
         unique_together = ("user", "course")
         indexes = [
@@ -166,6 +179,9 @@ class UserEnrollment(models.Model):
 
     def __str__(self):
         return f"{self.user.whatsapp_id} - {self.course.course_name}"
+
+    def get_level_display(self):
+        return "Level {}".format(self.progress)
 
 
 class UserAssessmentAttempt(models.Model):
@@ -226,6 +242,7 @@ class UserQuestionResponse(models.Model):
     # User response
     user_answer = models.TextField(blank=True, null=True)
     is_correct = models.BooleanField(null=True, blank=True)
+    score = models.FloatField(null=True, blank=True)
     answered_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
