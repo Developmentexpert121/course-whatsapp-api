@@ -110,13 +110,13 @@ CORS_ALLOWED_ORIGINS = [
     "http://localhost:5173",
     "http://localhost:4173",
     "http://localhost:8000",  # React frontend
-    "http://51.20.205.5:8000/",
+    "http://51.20.205.5:8000",
 ]
 
 CSRF_TRUSTED_ORIGINS = [
     "http://localhost:5173",
     "http://localhost:4173",
-    "http://51.20.205.5:8000/",
+    "http://51.20.205.5:8000",
     # "https://yourproductiondomain.com",
 ]
 # Password validation
