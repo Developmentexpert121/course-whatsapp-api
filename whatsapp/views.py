@@ -9,6 +9,7 @@ from django.utils.decorators import method_decorator
 
 from whatsapp.serializers import (
     UserAssessmentAttemptSerializer,
+    UserAssessmentAttemptWithResponsesSerializer,
     UserEnrollmentSerializer,
     WhatsappUserSerializer,
 )
@@ -199,7 +200,7 @@ class WhatsAppUserView(APIView):
 
             # Fetch test results
             assessment_attempts = UserAssessmentAttempt.objects.filter(user=user)
-            test_results = UserAssessmentAttemptSerializer(
+            test_results = UserAssessmentAttemptWithResponsesSerializer(
                 assessment_attempts, many=True
             ).data
             # Serialize user

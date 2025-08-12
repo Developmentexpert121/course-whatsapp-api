@@ -4,7 +4,9 @@ from django.db import transaction
 from datetime import datetime
 from django.utils import timezone
 
-from whatsapp.serializers import UserAssessmentAttemptSerializer
+from whatsapp.serializers import (
+    UserAssessmentAttemptWithResponsesSerializer,
+)
 from whatsapp.services.ai_reponse_interpreter import AIResponseInterpreter
 from whatsapp.services.messaging import WhatsAppService
 from ..models import (
@@ -23,15 +25,16 @@ class UserAssessmentService:
     ai_interpreter = AIResponseInterpreter(api_key=os.getenv("OPENAI_API_KEY"))
 
     @staticmethod
-    def get_user_assessments(user):
+    def get_user_assessments(user_id):
         """Retrieve all WhatsApp users"""
         try:
-            assessment_attempts = UserAssessmentAttempt.objects.all()
+            assessment_attempts = UserAssessmentAttempt.objects.filter(user_id=user_id)
+            serialized_attempts = UserAssessmentAttemptWithResponsesSerializer(
+                assessment_attempts, many=True
+            ).data
             return {
                 "success": True,
-                "data": UserAssessmentAttemptSerializer(
-                    assessment_attempts, many=True
-                ).data,
+                "data": serialized_attempts,
             }
         except Exception as e:
             logger.exception("Error retrieving users")
