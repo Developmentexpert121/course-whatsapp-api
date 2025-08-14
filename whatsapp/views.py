@@ -15,6 +15,8 @@ from whatsapp.serializers import (
 )
 from whatsapp.services.assessment_service import UserAssessmentService
 from whatsapp.services.course_delivery_manager import CourseDeliveryManager
+from whatsapp.services.cretificates_service import CertificateService
+from whatsapp.services.post_course_manager import PostCourseManager
 from .services.user import WhatsappUserService
 from .services.messaging import WhatsAppService
 from .services.onboarding_manager import OnboardingManager
@@ -118,6 +120,17 @@ class WhatsAppWebhookView(APIView):
                         phone_number_id=phone_number_id,
                         user_input=message_body,
                         user_waid=from_number,
+                    )
+
+                elif (
+                    user.onboarding_status == "completed"
+                    and user.orientation_status == "completed"
+                    and user.post_course_status == "started"
+                ):
+                    # will send other messages reply here
+                    post_course_manager = PostCourseManager(phone_number_id)
+                    post_course_manager.handle_response(
+                        user_waid=user.whatsapp_id, user_input=message_body
                     )
                 else:
                     delivery_manager = CourseDeliveryManager(
@@ -402,3 +415,70 @@ class AssessmentAttempts(APIView):
                 },
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
+
+
+@method_decorator(csrf_exempt, name="dispatch")
+class WhatsAppBroadcastView(APIView):
+    permission_classes = []
+    authentication_classes = []
+
+    """
+    API to send WhatsApp messages/files to multiple users.
+    Expected payload:
+    {
+        "phone_number_id": "1234567890",
+        "users": ["919812345678", "919855507091"],
+        "message": "Hello students!",
+        "file_url": "https://my-bucket.s3.amazonaws.com/certificate.pdf",  # optional
+        "filename": "Certificate.pdf"  # optional
+    }
+    """
+
+    def post(self, request):
+        phone_number_id = os.getenv("WHATSAPP_PHONE_NUMBER_ID")
+        users = request.data.get("users", [])
+        message = request.data.get("message", "")
+        file_url = request.data.get("file_url")
+        filename = request.data.get("filename")
+
+        if not phone_number_id or not users:
+            return Response(
+                {"error": "phone_number_id and users are required"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        sent_count = 0
+        failed_users = []
+
+        for user in users:
+            try:
+                if file_url and filename:
+                    if message:
+                        WhatsAppService.send_file_with_message(
+                            phone_number_id, user, file_url, filename, message
+                        )
+                    else:
+                        WhatsAppService.send_file(
+                            phone_number_id, user, file_url, filename
+                        )
+                elif message:
+                    WhatsAppService.send_message(phone_number_id, user, message)
+                else:
+                    failed_users.append(user)
+                    continue
+                sent_count += 1
+            except Exception as e:
+                logger.error(f"Failed to send to {user}: {str(e)}")
+                failed_users.append(user)
+
+        message = f"Sent to {sent_count} users"
+        if failed_users:
+            message += f". Failed to deliver to {len(failed_users)} users"
+        return Response(
+            {
+                "success": True,
+                "message": message,
+                "data": {"sent_count": sent_count, "failed_users": failed_users},
+            },
+            status=status.HTTP_200_OK,
+        )

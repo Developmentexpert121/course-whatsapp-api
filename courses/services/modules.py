@@ -54,6 +54,8 @@ class ModuleService:
         try:
             # First get the course instance
             course = Course.objects.get(course_id=course_id)
+            course.is_active = False
+            course.save()
 
             module, created = Module.objects.update_or_create(
                 module_id=module_id,

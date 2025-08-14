@@ -104,9 +104,38 @@ class AssessmentService:
             # Handle activation logic
             is_being_activated = data.get("isActive", False)
             assessment_type = data.get("type", assessment.type)
-            module_id = data.get("moduleId") or assessment.module.module_id
+            module_id = data.get("moduleId") or (
+                assessment.module.module_id if assessment.module else None
+            )
 
             if is_being_activated:
+                # Check if assessment has valid set of questions
+                existing_questions = (
+                    data.get("questions")
+                    if "questions" in data
+                    else list(assessment.questions.all())
+                )
+
+                if not existing_questions or (len(existing_questions) == 0):
+                    return {
+                        "success": False,
+                        "data": None,
+                        "error": "Cannot activate assessment without a question",
+                    }
+
+                # Optional: Add more validation rules here (e.g., each MCQ must have options)
+                for q in existing_questions:
+                    q_type = q.get("type") if isinstance(q, dict) else q.type
+                    if q_type == "mcq":
+                        options = q.get("options") if isinstance(q, dict) else q.options
+                        if not options or len(options) < 2:
+                            return {
+                                "success": False,
+                                "data": None,
+                                "error": "Each MCQ must have at least two options",
+                            }
+
+                # Deactivate other active assessments of same type/module
                 Assessment.objects.filter(
                     module_id=module_id, type=assessment_type
                 ).exclude(assessment_id=assessment.assessment_id).update(

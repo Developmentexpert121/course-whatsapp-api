@@ -20,7 +20,7 @@ class Course(models.Model):
     duration_in_weeks = models.PositiveIntegerField()
     level = models.CharField(max_length=20, choices=LEVEL_CHOICES)
     tags = models.JSONField(default=list, blank=True)
-    is_active = models.BooleanField(default=True)
+    is_active = models.BooleanField(default=False)
 
     def __str__(self):
         return self.course_name

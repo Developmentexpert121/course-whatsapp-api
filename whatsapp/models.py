@@ -69,6 +69,19 @@ class WhatsappUser(models.Model):
     orientation_step = models.PositiveSmallIntegerField(default=0)
     orientation_completed_at = models.DateTimeField(null=True, blank=True)
 
+    # Post-course enrollment flow tracking
+    post_course_status = models.CharField(
+        max_length=20,
+        choices=[
+            ("not_started", "Not Started"),
+            ("started", "Started"),
+            ("completed", "Completed"),
+        ],
+        default="not_started",
+    )
+    post_course_step = models.PositiveSmallIntegerField(default=0)
+    post_course_completed_at = models.DateTimeField(null=True, blank=True)
+
     shared_courses_list = models.ManyToManyField(
         Course, blank=True, related_name="shared_with_users"
     )
@@ -135,11 +148,15 @@ class UserEnrollment(models.Model):
     last_accessed = models.DateTimeField(auto_now=True)
     progress = models.FloatField(default=0.0)  # 0.0 to 1.0 (percentage)
     completed = models.BooleanField(default=False)
+    completed_at = models.DateTimeField(null=True, blank=True)  # Track completion date
     status = models.CharField(
         max_length=20, choices=STATUS_CHOICES, default="in_progress"
     )
     certificate_earned = models.BooleanField(default=False)
     certificate_id = models.CharField(max_length=255, blank=True, null=True)
+    certificate_url = models.URLField(
+        max_length=500, blank=True, null=True
+    )  # Link to PDF in S3
 
     # Current position tracking
     current_module = models.ForeignKey(
@@ -182,6 +199,35 @@ class UserEnrollment(models.Model):
 
     def get_level_display(self):
         return "Level {}".format(self.progress)
+
+
+class ModuleDeliveryProgress(models.Model):
+    STATE_CHOICES = [
+        ("not_started", "Not Started"),
+        ("content_delivered", "Content Delivered"),
+        ("quiz_delivered", "Quiz Delivered"),
+        ("quiz_completed", "Quiz Completed"),
+        ("assessment_delivered", "Assessment Delivered"),
+        ("assessment_completed", "Assessment Completed"),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    enrollment = models.ForeignKey(
+        UserEnrollment, on_delete=models.CASCADE, related_name="module_progress"
+    )
+    module = models.ForeignKey(
+        Module, on_delete=models.CASCADE, related_name="delivery_progress"
+    )
+    state = models.CharField(
+        max_length=50, choices=STATE_CHOICES, default="not_started"
+    )
+    last_updated = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = ("enrollment", "module")
+
+    def __str__(self):
+        return f"{self.enrollment.user} - {self.module} ({self.state})"
 
 
 class UserAssessmentAttempt(models.Model):

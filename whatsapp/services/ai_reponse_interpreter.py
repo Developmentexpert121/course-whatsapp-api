@@ -152,13 +152,13 @@ class AIResponseInterpreter:
         Returns one of:
         'greeting', 'continue', 'quiz', 'module', 'question', 'cancel', 'unknown'
         """
+        # 4. 'quiz' - Requests a quiz or to be tested (e.g., "quiz me", "start quiz").
         system_prompt = """You are an intent classifier for an educational WhatsApp bot.
             Classify the user's message into exactly one of the following categories:
 
             1. 'greeting' - General greetings, gratitude, or polite phrases (e.g., "hello", "thanks").
             2. 'continue' - Signals readiness to move forward (e.g., "ready", "next", "go ahead").
             3. 'assessment' - Mentions assessments explicitly (e.g., "assessment", "test time").
-            4. 'quiz' - Requests a quiz or to be tested (e.g., "quiz me", "start quiz").
             5. 'module' - Requests specific learning content or lessons (e.g., "show module", "study material").
             6. 'question' - Asks a question *about the course*, the module, the subject, or related topics (e.g., "what is this course about?", "does this cover science?").
             7. 'cancel' - Wants to stop, pause, or cancel the interaction (e.g., "stop", "cancel", "exit").
@@ -189,7 +189,7 @@ class AIResponseInterpreter:
             valid_intents = {
                 "greeting",
                 "continue",
-                "quiz",
+                # "quiz",
                 "assessment",
                 "module",
                 "question",

@@ -1,6 +1,7 @@
 from django.urls import path
 from .views import (
     AssessmentAttempts,
+    WhatsAppBroadcastView,
     WhatsAppWebhookView,
     WhatsAppUserView,
     WhatsAppUserListView,
@@ -21,5 +22,10 @@ urlpatterns = [
         "assessments/<str:user_id>/",
         AssessmentAttempts.as_view(),
         name="whatsapp_users_GET_PUT_DELETE",
+    ),
+    path(
+        "broadcast/",
+        WhatsAppBroadcastView.as_view(),
+        name="whatsapp-broadcast",
     ),
 ]
