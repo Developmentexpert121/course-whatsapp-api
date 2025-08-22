@@ -8,6 +8,8 @@ from django.views.decorators.csrf import csrf_exempt
 from .services.course import CourseService
 from .services.modules import ModuleService
 from .services.assesments import AssessmentService
+from .services.topics import TopicService
+from .serializers import TopicSerializer 
 
 
 # Create your views here.
@@ -145,9 +147,10 @@ class ModuleView(APIView):
     # courses/${courses_id}/modules/             GET will fetch all modules by course id.
     def get(self, request, course_id=None, module_id=None):
         """Get all modules or a specific module by ID"""
+        include_topics = request.query_params.get("includeTopics") in ("1", "true", "True")
         if module_id:
             # Get single module
-            result = ModuleService.get_module(module_id)
+            result = ModuleService.get_module(module_id, include_topics=include_topics)
         else:
             # Get all modules (optionally filtered by course_id)
             result = ModuleService.get_all_modules(course_id)
@@ -378,3 +381,86 @@ class AssesmentListView(APIView):
                 {"success": False, "error": result.get("error", "Unknown error")},
                 status=status.HTTP_200_OK,
             )
+            
+@method_decorator(csrf_exempt, name="dispatch")
+class TopicView(APIView):
+    authentication_classes = []
+    permission_classes = []
+
+    # /courses/<course_id>/modules/<module_id>/topics/        -> GET (list) / POST (create)
+    # /courses/<course_id>/modules/<module_id>/topics/<topic_id>/ -> GET/PUT/DELETE
+    def get(self, request, course_id, module_id, topic_id=None):
+        if topic_id:
+            result = TopicService.get_topic(topic_id)
+        else:
+            result = TopicService.get_topics_by_module(str(module_id))
+
+        if result.get("success"):
+            return Response(
+                {"success": True, "message": "Topics fetched successfully", "data": result.get("data")},
+                status=status.HTTP_200_OK,
+            )
+        else:
+            return Response({"success": False, "error": result.get("error", "Unknown error")},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+    def post(self, request, course_id, module_id):
+        # Ensure module_id from URL is used
+        data = request.data.copy()
+        data["module_id"] = str(module_id)
+        # Option A: use TopicService
+        result = TopicService.create_or_update_topic(module_id=str(module_id),
+                                                     topic_id=data.get("topicId"),  # usually None
+                                                     data={
+                                                         "title": data.get("title"),
+                                                         "content": data.get("content"),
+                                                         "order": data.get("order"),
+                                                         "is_active": data.get("is_active", True),
+                                                     })
+        # Option B: if you prefer serializer, instantiate serializer with data and call .is_valid()
+        if result.get("success"):
+            return Response({"success": True, "message": result.get("message"), "data": result.get("data")},
+                            status=status.HTTP_200_OK)
+        else:
+            return Response({"success": False, "error": result.get("error", "Unknown error")},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+    def put(self, request, course_id, module_id, topic_id):
+        data = request.data.copy()
+        result = TopicService.create_or_update_topic(module_id=str(module_id),
+                                                     topic_id=str(topic_id),
+                                                     data={
+                                                         "title": data.get("title"),
+                                                         "content": data.get("content"),
+                                                         "order": data.get("order"),
+                                                         "is_active": data.get("is_active"),
+                                                     })
+        if result.get("success"):
+            return Response({"success": True, "message": result.get("message"), "data": result.get("data")},
+                            status=status.HTTP_200_OK)
+        else:
+            return Response({"success": False, "error": result.get("error", "Unknown error")},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+    def delete(self, request, course_id, module_id, topic_id):
+        result = TopicService.delete_topic(str(topic_id))
+        if result.get("success"):
+            return Response({"success": True, "message": result.get("message"), "data": result.get("data")},
+                            status=status.HTTP_200_OK)
+        else:
+            return Response({"success": False, "error": result.get("error", "Unknown error")},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+@method_decorator(csrf_exempt, name="dispatch")
+class TopicReorderView(APIView):
+    authentication_classes = []
+    permission_classes = []
+
+    def post(self, request, course_id, module_id):
+        ordered_ids = request.data.get("orderedTopicIds", [])
+        result = TopicService.reorder_topics(module_id=str(module_id), ordered_topic_ids=ordered_ids)
+        if result.get("success"):
+            return Response({"success": True, "message": result.get("message")}, status=status.HTTP_200_OK)
+        else:
+            return Response({"success": False, "error": result.get("error", "Unknown error")},
+                            status=status.HTTP_400_BAD_REQUEST)

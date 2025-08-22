@@ -1,14 +1,15 @@
 import logging
 from courses.models import Course, Module
+from .topics import TopicService  
 
 logger = logging.getLogger(__name__)
 
 
 class ModuleService:
     @classmethod
-    def to_dict(cls, module):
-        """Convert Module model instance to dictionary"""
-        return {
+    def to_dict(cls, module,  include_topics=False):
+        """Convert Module model instance to dictionaryoptionally including topics"""
+        module_dict =  {
             "moduleId": module.module_id,
             "courseId": module.course.course_id,
             "title": module.title,
@@ -17,6 +18,15 @@ class ModuleService:
             "createdAt": module.created_at,
             "updatedAt": module.updated_at,
         }
+        
+        if include_topics:
+                    topics_result = TopicService.get_topics_by_module(str(module.module_id))
+                    if topics_result["success"]:
+                        module_dict["topics"] = topics_result["data"]
+                    else:
+                        module_dict["topics"] = []
+                        
+        return module_dict
 
     @classmethod
     def get_all_modules(cls, course_id=None):
@@ -37,11 +47,11 @@ class ModuleService:
             return {"success": False, "data": None, "error": str(e)}
 
     @classmethod
-    def get_module(cls, module_id):
-        """Retrieve a module by ID"""
+    def get_module(cls, module_id, include_topics=False):
+        """Retrieve a module by ID, optionally including topics"""
         try:
             module = Module.objects.get(module_id=module_id)
-            return {"success": True, "data": cls.to_dict(module)}
+            return {"success": True, "data": cls.to_dict(module, include_topics)}
         except Module.DoesNotExist:
             return {"success": False, "data": None, "error": "Module not found"}
         except Exception as e:

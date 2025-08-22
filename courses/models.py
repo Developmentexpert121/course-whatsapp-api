@@ -103,3 +103,23 @@ class AssessmentQuestion(models.Model):
 
     def __str__(self):
         return self.question_text
+
+
+class Topic(models.Model):
+    topic_id = models.UUIDField(
+    primary_key=True, default=uuid.uuid4, editable=False, unique=True)
+    module = models.ForeignKey(
+    Module, on_delete=models.CASCADE, related_name="topics")
+    title = models.CharField(max_length=255)
+    content = models.TextField() 
+    order = models.PositiveIntegerField()  
+    is_active = models.BooleanField(default=True)  
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+class Meta:
+    ordering = ["order"]  
+    unique_together = [("module", "order")] 
+
+def __str__(self):
+    return f"{self.title} (Module: {self.module.title})"
