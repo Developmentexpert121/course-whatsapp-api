@@ -386,9 +386,7 @@ class AssesmentListView(APIView):
 class TopicView(APIView):
     authentication_classes = []
     permission_classes = []
-
-    # /courses/<course_id>/modules/<module_id>/topics/        -> GET (list) / POST (create)
-    # /courses/<course_id>/modules/<module_id>/topics/<topic_id>/ -> GET/PUT/DELETE
+    
     def get(self, request, course_id, module_id, topic_id=None):
         if topic_id:
             result = TopicService.get_topic(topic_id)
@@ -404,43 +402,92 @@ class TopicView(APIView):
             return Response({"success": False, "error": result.get("error", "Unknown error")},
                             status=status.HTTP_400_BAD_REQUEST)
 
-    def post(self, request, course_id, module_id):
-        # Ensure module_id from URL is used
+    def post(self, request, course_id, module_id, topic_id=None):
         data = request.data.copy()
-        data["module_id"] = str(module_id)
-        # Option A: use TopicService
-        result = TopicService.create_or_update_topic(module_id=str(module_id),
-                                                     topic_id=data.get("topicId"),  # usually None
-                                                     data={
-                                                         "title": data.get("title"),
-                                                         "content": data.get("content"),
-                                                         "order": data.get("order"),
-                                                         "is_active": data.get("is_active", True),
-                                                     })
-        # Option B: if you prefer serializer, instantiate serializer with data and call .is_valid()
-        if result.get("success"):
-            return Response({"success": True, "message": result.get("message"), "data": result.get("data")},
-                            status=status.HTTP_200_OK)
+
+        # Normalize isActive / is_active:
+        raw_is_active = None
+        if "is_active" in data:
+            raw_is_active = data.get("is_active")
+        elif "isActive" in data:
+            raw_is_active = data.get("isActive")
+
+        if raw_is_active is None:
+            # default for creating a topic: active
+            is_active_val = True
         else:
-            return Response({"success": False, "error": result.get("error", "Unknown error")},
-                            status=status.HTTP_400_BAD_REQUEST)
+            if isinstance(raw_is_active, str):
+                is_active_val = raw_is_active.lower() in ("1", "true", "yes")
+            else:
+                is_active_val = bool(raw_is_active)
+
+        # Normalize order to int if provided
+        order_val = None
+        if "order" in data and data.get("order") not in (None, ""):
+            try:
+                order_val = int(data.get("order"))
+            except (ValueError, TypeError):
+                # invalid order -> ignore and let service compute default
+                order_val = None
+
+        payload = {
+            "title": data.get("title"),
+            "content": data.get("content"),
+            # only include order if parsed successfully, else service will compute
+        }
+        if order_val is not None:
+            payload["order"] = order_val
+
+        # always include is_active (coerced boolean)
+        payload["is_active"] = is_active_val
+
+        # call service to create the topic
+        result = TopicService.create_or_update_topic(
+            module_id=str(module_id), topic_id=None, data=payload
+        )
+
+        if result.get("success"):
+            return Response(
+                {"success": True, "message": result.get("message"), "data": result.get("data")},
+                status=status.HTTP_200_OK,
+            )
+        return Response(
+            {"success": False, "error": result.get("error", "Unknown error")},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
 
     def put(self, request, course_id, module_id, topic_id):
         data = request.data.copy()
-        result = TopicService.create_or_update_topic(module_id=str(module_id),
-                                                     topic_id=str(topic_id),
-                                                     data={
-                                                         "title": data.get("title"),
-                                                         "content": data.get("content"),
-                                                         "order": data.get("order"),
-                                                         "is_active": data.get("is_active"),
-                                                     })
+
+        raw_is_active = None
+        if "is_active" in data:
+            raw_is_active = data.get("is_active")
+        elif "isActive" in data:
+            raw_is_active = data.get("isActive")
+
+        is_active_val = None
+        if raw_is_active is not None:
+            if isinstance(raw_is_active, str):
+                is_active_val = raw_is_active.lower() in ("1", "true", "yes")
+            else:
+                is_active_val = bool(raw_is_active)
+
+        payload = {
+            "title": data.get("title"),
+            "content": data.get("content"),
+            "order": data.get("order"),
+        }
+        if is_active_val is not None:
+            payload["is_active"] = is_active_val
+
+        result = TopicService.create_or_update_topic(
+            module_id=str(module_id),
+            topic_id=str(topic_id),
+            data=payload,
+        )
         if result.get("success"):
-            return Response({"success": True, "message": result.get("message"), "data": result.get("data")},
-                            status=status.HTTP_200_OK)
-        else:
-            return Response({"success": False, "error": result.get("error", "Unknown error")},
-                            status=status.HTTP_400_BAD_REQUEST)
+            return Response({"success": True, "message": result.get("message"), "data": result.get("data")}, status=status.HTTP_200_OK)
+        return Response({"success": False, "error": result.get("error", "Unknown error")}, status=status.HTTP_400_BAD_REQUEST)
 
     def delete(self, request, course_id, module_id, topic_id):
         result = TopicService.delete_topic(str(topic_id))

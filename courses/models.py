@@ -117,9 +117,9 @@ class Topic(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
-class Meta:
-    ordering = ["order"]  
-    unique_together = [("module", "order")] 
+    class Meta:
+        ordering = ["order"]  
+        unique_together = [("module", "order")] 
 
-def __str__(self):
-    return f"{self.title} (Module: {self.module.title})"
+    def __str__(self):
+        return f"{self.title} (Module: {self.module.title})"

@@ -1,9 +1,10 @@
 # services/topics.py
+import uuid
 import logging
 from typing import Optional, Dict, List
 from django.db import transaction
-from authentication import models
 from courses.models import Topic, Module
+from django.db.models import Max , Case, When, IntegerField, F    
 
 logger = logging.getLogger(__name__)
 
@@ -54,46 +55,76 @@ class TopicService:
     def create_or_update_topic(
         cls, module_id: str, topic_id: Optional[str], data: Dict
     ) -> Dict:
-        """Create or update a topic, handling order assignment"""
+        """Create or update a topic, handling order assignment safely."""
         try:
+            print("99----7-----7----7----7---7---7---7----7---7----7----7----")
             module = Module.objects.get(module_id=module_id)
-            
             with transaction.atomic():
-                # If creating a new topic, determine the next available order
+                # ---------- CREATE path ----------
                 if not topic_id:
-                    max_order = Topic.objects.filter(module=module).aggregate(
-                        models.Max("order")
-                    )["order__max"] or 0
-                    data["order"] = data.get("order", max_order + 1)
-                
-                # Create or update the topic
-                topic, created = Topic.objects.update_or_create(
-                    topic_id=topic_id if topic_id else None,
-                    defaults={
-                        "module": module,
-                        "title": data.get("title"),
-                        "content": data.get("content"),
-                        "order": data.get("order"),
-                        "is_active": data.get("is_active", True),
-                    },
-                )
-                
-                # If order was changed, reorder other topics if needed
-                if "order" in data:
-                    cls._renumber_topics(module)
-                
+                    provided_order = data.get("order", None)
+                    if provided_order is None:
+                        max_order = (
+                            Topic.objects.filter(module=module)
+                            .aggregate(max_order=Max("order"))
+                        )["max_order"] or 0
+                        order_value = max_order + 1
+                    else:
+                        order_value = int(provided_order)
+                        if order_value < 1:
+                            order_value = 1
+
+                    topic = Topic.objects.create(
+                        module=module,
+                        title=(data.get("title") or ""),
+                        content=(data.get("content") or ""),
+                        order=order_value,                     # << use order_value here
+                        is_active=data.get("is_active", True),
+                    )
+                    created = True
+
+                    # If client explicitly supplied an order, renumber to insert correctly
+                    if provided_order is not None:
+                        cls._renumber_topics(module)
+
+                # ---------- UPDATE path ----------
+                else:
+                    defaults = {}
+                    if "title" in data:
+                        defaults["title"] = data.get("title")
+                    if "content" in data:
+                        defaults["content"] = data.get("content")
+                    if "is_active" in data:
+                        defaults["is_active"] = data.get("is_active")
+                    if "order" in data and data.get("order") is not None:
+                        defaults["order"] = int(data.get("order"))
+
+                    # keep module reference consistent
+                    defaults["module"] = module
+
+                    topic, created = Topic.objects.update_or_create(
+                        topic_id=topic_id,
+                        defaults=defaults,
+                    )
+
+                    if "order" in data and data.get("order") is not None:
+                        cls._renumber_topics(module)
+
                 action = "created" if created else "updated"
-                return {
+                return { 
                     "success": True,
                     "data": cls.to_dict(topic),
                     "message": f"Topic {action} successfully",
                 }
-                
+
         except Module.DoesNotExist:
             return {"success": False, "data": None, "error": "Module not found"}
         except Exception as e:
             logger.exception(f"Error creating/updating topic {topic_id}")
             return {"success": False, "data": None, "error": str(e)}
+
+
+
 
     @classmethod
     def delete_topic(cls, topic_id: str) -> Dict:
@@ -120,26 +151,61 @@ class TopicService:
 
     @classmethod
     def reorder_topics(cls, module_id: str, ordered_topic_ids: List[str]) -> Dict:
-        """Reorder topics based on a list of topic IDs (for drag/drop)"""
+        """Reorder topics safely using positive temporary offsets (avoids negative values)."""
         try:
             module = Module.objects.get(module_id=module_id)
-            
-            with transaction.atomic():
-                # Update the order of each topic based on its position in the list
-                for new_order, topic_id in enumerate(ordered_topic_ids, start=1):
-                    Topic.objects.filter(
-                        topic_id=topic_id, module=module
-                    ).update(order=new_order)
-                
-                return {
-                    "success": True,
-                    "message": "Topics reordered successfully",
-                }
         except Module.DoesNotExist:
             return {"success": False, "error": "Module not found"}
+        try:
+            if not isinstance(ordered_topic_ids, list) or len(ordered_topic_ids) == 0:
+                return {"success": False, "error": "orderedTopicIds must be a non-empty list"}
+
+            # normalize & validate UUIDs
+            cleaned_ids = []
+            for raw_id in ordered_topic_ids:
+                if not isinstance(raw_id, str):
+                    return {"success": False, "error": f"Invalid topic id: {raw_id}"}
+                raw_id = raw_id.strip()
+                try:
+                    tid = uuid.UUID(raw_id)
+                    cleaned_ids.append(tid)
+                except ValueError:
+                    return {"success": False, "error": f"Invalid topic id format: {raw_id}"}
+
+            # ensure provided IDs belong to this module
+            module_qs = Topic.objects.filter(module=module)
+            existing_ids = set(module_qs.values_list("topic_id", flat=True))
+            provided_set = set(cleaned_ids)
+            missing = provided_set - existing_ids
+            if missing:
+                missing_str = ", ".join(str(x) for x in missing)
+                return {"success": False, "error": f"The following topic(s) do not belong to module {module_id}: {missing_str}"}
+
+            # compute a safe positive temporary base > current max order
+            current_max = module_qs.aggregate(max_order=Max("order"))["max_order"] or 0
+            # ensure temp_base is strictly greater than any existing order
+            temp_base = int(current_max) + len(cleaned_ids) + 5
+
+            # Two-phase update inside a transaction
+            with transaction.atomic():
+                # Phase 1: move mapped topics to unique temporary high values
+                for new_order, tid in enumerate(cleaned_ids, start=1):
+                    temp_value = temp_base + new_order
+                    Topic.objects.filter(module=module, topic_id=tid).update(order=temp_value)
+
+                # Phase 2: set final desired orders for mapped topics
+                for new_order, tid in enumerate(cleaned_ids, start=1):
+                    Topic.objects.filter(module=module, topic_id=tid).update(order=new_order)
+
+                # Final safety: renumber the entire module to ensure contiguous ordering
+                cls._renumber_topics(module)
+
+            return {"success": True, "message": "Topics reordered successfully"}
+
         except Exception as e:
             logger.exception(f"Error reordering topics for module {module_id}")
             return {"success": False, "error": str(e)}
+
 
     @classmethod
     def _renumber_topics(cls, module: Module) -> None:
