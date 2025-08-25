@@ -39,6 +39,7 @@ class WhatsappUser(models.Model):
     last_active = models.DateTimeField()
     full_name = models.CharField(max_length=255)
     email = models.EmailField(blank=True, null=True)
+    email_verified = models.BooleanField(default=False)
     is_active = models.BooleanField(default=True)
 
     # Onboarding tracking
@@ -54,6 +55,10 @@ class WhatsappUser(models.Model):
     )
     onboarding_step = models.PositiveSmallIntegerField(default=0)
     onboarding_completed_at = models.DateTimeField(null=True, blank=True)
+
+    otp_code = models.CharField(max_length=6, null=True, blank=True)
+    otp_expires_at = models.DateTimeField(null=True, blank=True)
+    otp_attempts = models.IntegerField(default=0)
 
     # Orientation tracking
     orientation_status = models.CharField(
