@@ -1,6 +1,8 @@
 import logging
 import os
 from django.utils import timezone
+import os
+import tempfile
 from whatsapp.models import (
     WhatsappUser,
     UserEnrollment,
@@ -12,15 +14,26 @@ from courses.services.modules import ModuleService
 from courses.services.assesments import AssessmentService
 from whatsapp.services.assessment_service import UserAssessmentService
 from whatsapp.services.cretificates_service import CertificateService
+from whatsapp.services.emailing_service import EmailService
 from whatsapp.services.module_delivery_service import ModuleDeliveryProgressService
 from whatsapp.services.post_course_manager import PostCourseManager
-
-
+import requests
+import tempfile
 from .enrollment_service import EnrollmentService
 from .messaging import WhatsAppService
 from whatsapp.services.ai_reponse_interpreter import AIResponseInterpreter
 
 logger = logging.getLogger(__name__)
+
+
+def download_temp_file(url: str, suffix=".pdf") -> str:
+    response = requests.get(url, stream=True)
+    response.raise_for_status()
+
+    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+        for chunk in response.iter_content(chunk_size=8192):
+            tmp.write(chunk)
+        return tmp.name
 
 
 class CourseDeliveryManager:
@@ -36,6 +49,7 @@ class CourseDeliveryManager:
         self.user_assessment_service = UserAssessmentService()
         self.module_delivery_service = ModuleDeliveryProgressService()
         self.ceritficates_service = CertificateService()
+        self.email_service = EmailService()
         self.post_course_manager = PostCourseManager(phone_number_id=phone_number_id)
 
     def welcome_user_to_course(self, user_waid: str, enrollment: UserEnrollment):
@@ -645,6 +659,37 @@ class CourseDeliveryManager:
                 file_url=certificate_url,
                 filename=f"certificate_{enrollment.course.course_name}",
             )
+
+            if user.email:
+                subject = f"🎓 Your Certificate for {enrollment.course.course_name}"
+                body = (
+                    f"Dear {user.full_name},\n\n"
+                    f"Congratulations on completing the course *{enrollment.course.course_name}*!\n\n"
+                    "Attached is your certificate of completion.\n\n"
+                    "Keep learning!\nWAppStudy Team"
+                )
+
+                temp_file_path = None
+                try:
+                    # Download certificate locally
+                    temp_file_path = download_temp_file(certificate_url, suffix=".pdf")
+
+                    # Send email with attachment
+                    self.email_service.send_email_with_file(
+                        subject=subject,
+                        body=body,
+                        to=[user.email],
+                        attachments=[temp_file_path],
+                    )
+
+                except Exception:
+                    logger.exception(
+                        f"Failed to send certificate email to {user.email}"
+                    )
+                finally:
+                    # Cleanup local file
+                    if temp_file_path and os.path.exists(temp_file_path):
+                        os.remove(temp_file_path)
 
             self.post_course_manager.start(user_waid=user_waid)
 
