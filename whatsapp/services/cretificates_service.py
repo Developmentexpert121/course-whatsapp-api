@@ -5,7 +5,6 @@ from django.template.loader import render_to_string
 from weasyprint import HTML
 from whatsapp_bot import settings
 from datetime import datetime
-
 from whatsapp.models import UserEnrollment
 
 

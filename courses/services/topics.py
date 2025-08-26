@@ -125,7 +125,6 @@ class TopicService:
 
 
 
-
     @classmethod
     def delete_topic(cls, topic_id: str) -> Dict:
         """Delete a topic and optionally renumber siblings"""
@@ -215,3 +214,49 @@ class TopicService:
             if topic.order != order:
                 topic.order = order
                 topic.save()
+                
+                
+    @classmethod
+    def duplicate_topic(cls, topic_id: str, dest_module_id: Optional[str] = None) -> Dict:
+        """
+        Duplicate a single topic. If dest_module_id is provided, duplicate into that module,
+        otherwise duplicate into the same module (as a sibling).
+        Returns the duplicated topic dict on success.
+        """
+        try:
+            src_topic = Topic.objects.get(topic_id=topic_id)
+
+            # determine destination module
+            if dest_module_id:
+                try:
+                    dest_module = Module.objects.get(module_id=dest_module_id)
+                except Module.DoesNotExist:
+                    return {"success": False, "error": "Destination module not found"}
+            else:
+                dest_module = src_topic.module
+
+            with transaction.atomic():
+                # compute new order at destination
+                current_max = (
+                    Topic.objects.filter(module=dest_module).aggregate(max_order=Max("order"))["max_order"]
+                    or 0
+                )
+                new_order = int(current_max) + 1
+
+                duplicated = Topic.objects.create(
+                    module=dest_module,
+                    title=f"{src_topic.title} (Copy)",
+                    content=src_topic.content,
+                    order=new_order,
+                    is_active=src_topic.is_active,
+                )
+
+                # ensure contiguous ordering (defensive)
+                cls._renumber_topics(dest_module)
+
+            return {"success": True, "data": cls.to_dict(duplicated), "message": "Topic duplicated successfully"}
+        except Topic.DoesNotExist:
+            return {"success": False, "data": None, "error": "Source topic not found"}
+        except Exception as e:
+            logger.exception(f"Error duplicating topic {topic_id}")
+            return {"success": False, "data": None, "error": str(e)}

@@ -2,7 +2,7 @@ import logging
 import uuid
 from courses.models import Course, Module, Topic
 from .topics import TopicService  
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 from django.db.models import Max
 from django.db import transaction
 
@@ -75,12 +75,10 @@ class ModuleService:
           - isActive (optional)
         """
         try:
-            print("00000000000000000000000000000000")
             course = Course.objects.get(course_id=course_id)
             # maintain previous behaviour (you were toggling course is_active earlier)
             course.is_active = False
             course.save()
-            print("88888888888888888888888888")
 
             with transaction.atomic():
                 module, created = Module.objects.update_or_create(
@@ -95,7 +93,6 @@ class ModuleService:
 
                 # If frontend sent topics array, sync them
                 topics_payload = data.get("topics", None)
-                print("66666666666666666666666666")
                 if isinstance(topics_payload, list):
                     # Normalize items (dict with keys we expect)
                     normalized = []
@@ -105,10 +102,8 @@ class ModuleService:
                         raw_is_active = None
                         if "isActive" in item:
                             raw_is_active = item.get("isActive")
-                            print("222222222222222", raw_is_active)
                         elif "is_active" in item:
                             raw_is_active = item.get("is_active")
-                            print("111111111111111", raw_is_active)
 
                         # coerce to True/False (treat None as True)
                         if raw_is_active is None:
@@ -218,3 +213,56 @@ class ModuleService:
         except Exception as e:
             logger.exception(f"Error deleting module {module_id}")
             return {"success": False, "error": str(e)}
+
+    @classmethod
+    def duplicate_module(cls, module_id: str, dest_course_id: Optional[str] = None, include_topics: bool = True) -> Dict:
+        """
+        Duplicate a module. If dest_course_id is provided, duplicate into that course,
+        otherwise duplicate into the same course.
+        include_topics controls copying of topics.
+        """
+        try:
+            src_module = Module.objects.get(module_id=module_id)
+
+            # determine destination course
+            if dest_course_id:
+                try:
+                    dest_course = Course.objects.get(course_id=dest_course_id)
+                except Course.DoesNotExist:
+                    return {"success": False, "error": "Destination course not found"}
+            else:
+                dest_course = src_module.course
+
+            with transaction.atomic():
+                # determine order in destination course
+                current_max = Module.objects.filter(course=dest_course).aggregate(max_order=Max("order"))["max_order"] or 0
+                new_order = int(current_max) + 1
+
+                duplicated_module = Module.objects.create(
+                    course=dest_course,
+                    title=f"{src_module.title} (Copy)",
+                    content=src_module.content,
+                    order=new_order,
+                )
+
+                if include_topics:
+                    # duplicate topics in the same relative order
+                    src_topics = Topic.objects.filter(module=src_module).order_by("order")
+                    for t_idx, t in enumerate(src_topics, start=1):
+                        Topic.objects.create(
+                            module=duplicated_module,
+                            title=t.title,
+                            content=t.content,
+                            order=t_idx,  # start from 1 for the new module
+                            is_active=t.is_active,
+                        )
+
+                    # renumber to be safe
+                    TopicService._renumber_topics(duplicated_module)
+
+            return {"success": True, "data": cls.to_dict(duplicated_module, include_topics=True), "message": "Module duplicated successfully"}
+        except Module.DoesNotExist:
+            return {"success": False, "data": None, "error": "Source module not found"}
+        except Exception as e:
+            logger.exception(f"Error duplicating module {module_id}")
+            return {"success": False, "data": None, "error": str(e)}

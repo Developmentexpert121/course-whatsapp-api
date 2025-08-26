@@ -1,8 +1,10 @@
 import logging
+from typing import Dict
 from courses.models import Course
+from django.db import transaction
+from courses.services.modules import ModuleService
 
 logger = logging.getLogger(__name__)
-
 
 class CourseService:
     @classmethod
@@ -183,3 +185,42 @@ class CourseService:
         except Exception as e:
             logger.exception(f"Error updating status for course {course_id}")
             return {"success": False, "error": str(e)}
+        
+    @classmethod
+    def duplicate_course(cls, course_id: str, include_modules: bool = True, include_topics: bool = True) -> Dict:
+        """
+        Duplicate a course. include_modules controls whether to copy modules,
+        include_topics controls whether modules should include topics.
+        """
+        try:
+            src_course = Course.objects.get(course_id=course_id)
+
+            with transaction.atomic():
+                # create new course
+                duplicated_course = Course.objects.create(
+                    course_name=f"{src_course.course_name} (Copy)",
+                    description=src_course.description,
+                    category=src_course.category,
+                    duration_in_weeks=src_course.duration_in_weeks,
+                    level=src_course.level,
+                    tags=src_course.tags,
+                    is_active=False,  # duplicates start inactive by default
+                )
+
+                if include_modules:
+                    src_modules = src_course.modules.order_by("order")
+                    for mod in src_modules:
+                        # call module duplication, duplicating topics depends on include_topics
+                        ModuleService.duplicate_module(
+                            module_id=str(mod.module_id),
+                            dest_course_id=str(duplicated_course.course_id),
+                            include_topics=include_topics,
+                        )
+
+            return {"success": True, "data": cls.to_dict(duplicated_course), "message": "Course duplicated successfully"}
+        except Course.DoesNotExist:
+            return {"success": False, "data": None, "error": "Source course not found"}
+        except Exception as e:
+            logger.exception(f"Error duplicating course {course_id}")
+            return {"success": False, "data": None, "error": str(e)}
+

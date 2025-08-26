@@ -511,3 +511,52 @@ class TopicReorderView(APIView):
         else:
             return Response({"success": False, "error": result.get("error", "Unknown error")},
                             status=status.HTTP_400_BAD_REQUEST)
+
+@method_decorator(csrf_exempt, name="dispatch")
+class CourseDuplicateView(APIView):
+    authentication_classes = []
+    permission_classes = []
+
+    def post(self, request, course_id):
+        include_modules = request.data.get("includeModules", True)
+        include_topics = request.data.get("includeTopics", True)
+        result = CourseService.duplicate_course(
+            course_id=course_id,
+            include_modules=bool(include_modules),
+            include_topics=bool(include_topics),
+        )
+        if result.get("success"):
+            return Response({"success": True, "message": result.get("message"), "data": result.get("data")}, status=status.HTTP_200_OK)
+        return Response({"success": False, "error": result.get("error", "Unknown error")}, status=status.HTTP_400_BAD_REQUEST)
+
+
+@method_decorator(csrf_exempt, name="dispatch")
+class ModuleDuplicateView(APIView):
+    authentication_classes = []
+    permission_classes = []
+
+    def post(self, request, course_id, module_id):
+        include_topics = request.data.get("includeTopics", True)
+        # duplicate into same course by default (course_id passed in url) - if you want cross-course, accept destCourseId in body
+        result = ModuleService.duplicate_module(
+            module_id=module_id,
+            dest_course_id=course_id,
+            include_topics=bool(include_topics),
+        )
+        if result.get("success"):
+            return Response({"success": True, "message": result.get("message"), "data": result.get("data")}, status=status.HTTP_200_OK)
+        return Response({"success": False, "error": result.get("error", "Unknown error")}, status=status.HTTP_400_BAD_REQUEST)
+
+
+@method_decorator(csrf_exempt, name="dispatch")
+class TopicDuplicateView(APIView):
+    authentication_classes = []
+    permission_classes = []
+
+    def post(self, request, course_id, module_id, topic_id):
+        # duplicate into same module by default; optionally accept destModuleId in body
+        dest_module_id = request.data.get("destModuleId", module_id)
+        result = TopicService.duplicate_topic(topic_id=topic_id, dest_module_id=dest_module_id)
+        if result.get("success"):
+            return Response({"success": True, "message": result.get("message"), "data": result.get("data")}, status=status.HTTP_200_OK)
+        return Response({"success": False, "error": result.get("error", "Unknown error")}, status=status.HTTP_400_BAD_REQUEST)
