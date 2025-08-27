@@ -1,5 +1,5 @@
 from django.urls import path
-from .views import CourseView, ModuleView, AssesmentView, AssesmentListView, home
+from .views import CourseDuplicateView, CourseView, ModuleDuplicateView, ModuleView, AssesmentView, AssesmentListView, TopicDuplicateView, TopicReorderView, TopicView, home
 
 # prefixed by courses/
 urlpatterns = [
@@ -26,4 +26,23 @@ urlpatterns = [
         AssesmentListView.as_view(),
         name="assessment-list-get",
     ),
+    path(
+    "<str:course_id>/modules/<str:module_id>/topics/",
+    TopicView.as_view(),
+    name="topic-list-create",
+    ),
+    path(
+    "<str:course_id>/modules/<str:module_id>/topics/reorder/",
+    TopicReorderView.as_view(),
+    name="topic-reorder",
+    ),
+
+    path(
+    "<str:course_id>/modules/<str:module_id>/topics/<str:topic_id>/",
+    TopicView.as_view(),
+    name="topic-detail",
+    ),
+    path("<str:course_id>/duplicate/", CourseDuplicateView.as_view(), name="course-duplicate"),
+    path("<str:course_id>/modules/<str:module_id>/duplicate/", ModuleDuplicateView.as_view(), name="module-duplicate"),
+    path("<str:course_id>/modules/<str:module_id>/topics/<str:topic_id>/duplicate/", TopicDuplicateView.as_view(), name="topic-duplicate"),
 ]

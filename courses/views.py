@@ -8,6 +8,8 @@ from django.views.decorators.csrf import csrf_exempt
 from .services.course import CourseService
 from .services.modules import ModuleService
 from .services.assesments import AssessmentService
+from .services.topics import TopicService
+from .serializers import TopicSerializer 
 
 
 # Create your views here.
@@ -145,9 +147,10 @@ class ModuleView(APIView):
     # courses/${courses_id}/modules/             GET will fetch all modules by course id.
     def get(self, request, course_id=None, module_id=None):
         """Get all modules or a specific module by ID"""
+        include_topics = request.query_params.get("includeTopics") in ("1", "true", "True")
         if module_id:
             # Get single module
-            result = ModuleService.get_module(module_id)
+            result = ModuleService.get_module(module_id, include_topics=include_topics)
         else:
             # Get all modules (optionally filtered by course_id)
             result = ModuleService.get_all_modules(course_id)
@@ -378,3 +381,182 @@ class AssesmentListView(APIView):
                 {"success": False, "error": result.get("error", "Unknown error")},
                 status=status.HTTP_200_OK,
             )
+            
+@method_decorator(csrf_exempt, name="dispatch")
+class TopicView(APIView):
+    authentication_classes = []
+    permission_classes = []
+    
+    def get(self, request, course_id, module_id, topic_id=None):
+        if topic_id:
+            result = TopicService.get_topic(topic_id)
+        else:
+            result = TopicService.get_topics_by_module(str(module_id))
+
+        if result.get("success"):
+            return Response(
+                {"success": True, "message": "Topics fetched successfully", "data": result.get("data")},
+                status=status.HTTP_200_OK,
+            )
+        else:
+            return Response({"success": False, "error": result.get("error", "Unknown error")},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+    def post(self, request, course_id, module_id, topic_id=None):
+        data = request.data.copy()
+
+        # Normalize isActive / is_active:
+        raw_is_active = None
+        if "is_active" in data:
+            raw_is_active = data.get("is_active")
+        elif "isActive" in data:
+            raw_is_active = data.get("isActive")
+
+        if raw_is_active is None:
+            # default for creating a topic: active
+            is_active_val = True
+        else:
+            if isinstance(raw_is_active, str):
+                is_active_val = raw_is_active.lower() in ("1", "true", "yes")
+            else:
+                is_active_val = bool(raw_is_active)
+
+        # Normalize order to int if provided
+        order_val = None
+        if "order" in data and data.get("order") not in (None, ""):
+            try:
+                order_val = int(data.get("order"))
+            except (ValueError, TypeError):
+                # invalid order -> ignore and let service compute default
+                order_val = None
+
+        payload = {
+            "title": data.get("title"),
+            "content": data.get("content"),
+            # only include order if parsed successfully, else service will compute
+        }
+        if order_val is not None:
+            payload["order"] = order_val
+
+        # always include is_active (coerced boolean)
+        payload["is_active"] = is_active_val
+
+        # call service to create the topic
+        result = TopicService.create_or_update_topic(
+            module_id=str(module_id), topic_id=None, data=payload
+        )
+
+        if result.get("success"):
+            return Response(
+                {"success": True, "message": result.get("message"), "data": result.get("data")},
+                status=status.HTTP_200_OK,
+            )
+        return Response(
+            {"success": False, "error": result.get("error", "Unknown error")},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    def put(self, request, course_id, module_id, topic_id):
+        data = request.data.copy()
+
+        raw_is_active = None
+        if "is_active" in data:
+            raw_is_active = data.get("is_active")
+        elif "isActive" in data:
+            raw_is_active = data.get("isActive")
+
+        is_active_val = None
+        if raw_is_active is not None:
+            if isinstance(raw_is_active, str):
+                is_active_val = raw_is_active.lower() in ("1", "true", "yes")
+            else:
+                is_active_val = bool(raw_is_active)
+
+        payload = {
+            "title": data.get("title"),
+            "content": data.get("content"),
+            "order": data.get("order"),
+        }
+        if is_active_val is not None:
+            payload["is_active"] = is_active_val
+
+        result = TopicService.create_or_update_topic(
+            module_id=str(module_id),
+            topic_id=str(topic_id),
+            data=payload,
+        )
+        if result.get("success"):
+            return Response({"success": True, "message": result.get("message"), "data": result.get("data")}, status=status.HTTP_200_OK)
+        return Response({"success": False, "error": result.get("error", "Unknown error")}, status=status.HTTP_400_BAD_REQUEST)
+
+    def delete(self, request, course_id, module_id, topic_id):
+        result = TopicService.delete_topic(str(topic_id))
+        if result.get("success"):
+            return Response({"success": True, "message": result.get("message"), "data": result.get("data")},
+                            status=status.HTTP_200_OK)
+        else:
+            return Response({"success": False, "error": result.get("error", "Unknown error")},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+@method_decorator(csrf_exempt, name="dispatch")
+class TopicReorderView(APIView):
+    authentication_classes = []
+    permission_classes = []
+
+    def post(self, request, course_id, module_id):
+        ordered_ids = request.data.get("orderedTopicIds", [])
+        result = TopicService.reorder_topics(module_id=str(module_id), ordered_topic_ids=ordered_ids)
+        if result.get("success"):
+            return Response({"success": True, "message": result.get("message")}, status=status.HTTP_200_OK)
+        else:
+            return Response({"success": False, "error": result.get("error", "Unknown error")},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+@method_decorator(csrf_exempt, name="dispatch")
+class CourseDuplicateView(APIView):
+    authentication_classes = []
+    permission_classes = []
+
+    def post(self, request, course_id):
+        include_modules = request.data.get("includeModules", True)
+        include_topics = request.data.get("includeTopics", True)
+        result = CourseService.duplicate_course(
+            course_id=course_id,
+            include_modules=bool(include_modules),
+            include_topics=bool(include_topics),
+        )
+        if result.get("success"):
+            return Response({"success": True, "message": result.get("message"), "data": result.get("data")}, status=status.HTTP_200_OK)
+        return Response({"success": False, "error": result.get("error", "Unknown error")}, status=status.HTTP_400_BAD_REQUEST)
+
+
+@method_decorator(csrf_exempt, name="dispatch")
+class ModuleDuplicateView(APIView):
+    authentication_classes = []
+    permission_classes = []
+
+    def post(self, request, course_id, module_id):
+        include_topics = request.data.get("includeTopics", True)
+        # duplicate into same course by default (course_id passed in url) - if you want cross-course, accept destCourseId in body
+        result = ModuleService.duplicate_module(
+            module_id=module_id,
+            dest_course_id=course_id,
+            include_topics=bool(include_topics),
+        )
+        if result.get("success"):
+            return Response({"success": True, "message": result.get("message"), "data": result.get("data")}, status=status.HTTP_200_OK)
+        return Response({"success": False, "error": result.get("error", "Unknown error")}, status=status.HTTP_400_BAD_REQUEST)
+
+
+@method_decorator(csrf_exempt, name="dispatch")
+class TopicDuplicateView(APIView):
+    authentication_classes = []
+    permission_classes = []
+
+    def post(self, request, course_id, module_id, topic_id):
+        # duplicate into same module by default; optionally accept destModuleId in body
+        dest_module_id = request.data.get("destModuleId", module_id)
+        result = TopicService.duplicate_topic(topic_id=topic_id, dest_module_id=dest_module_id)
+        if result.get("success"):
+            return Response({"success": True, "message": result.get("message"), "data": result.get("data")}, status=status.HTTP_200_OK)
+        return Response({"success": False, "error": result.get("error", "Unknown error")}, status=status.HTTP_400_BAD_REQUEST)
