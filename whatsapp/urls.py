@@ -1,12 +1,18 @@
-from django.urls import path
+from django.urls import path, include
 from .views import (
     AssessmentAttempts,
+    AutomationRuleViewSet,
     WhatsAppBroadcastView,
     WhatsAppWebhookView,
     WhatsAppUserView,
     WhatsAppUserListView,
     home,
 )
+from rest_framework.routers import DefaultRouter
+
+router = DefaultRouter()
+router.register(r"automations", AutomationRuleViewSet, basename="automationrule")
+
 
 urlpatterns = [
     path("", home, name="home"),
@@ -28,4 +34,5 @@ urlpatterns = [
         WhatsAppBroadcastView.as_view(),
         name="whatsapp-broadcast",
     ),
+    path("", include(router.urls)),
 ]

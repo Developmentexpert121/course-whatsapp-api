@@ -304,3 +304,22 @@ class UserQuestionResponse(models.Model):
 
     def __str__(self):
         return f"Response to {self.question_text_snapshot[:50]}"
+
+
+class AutomationRule(models.Model):
+    name = models.CharField(max_length=100)
+    days_inactive = models.PositiveIntegerField(default=2)  # e.g. 2 days
+    message_template = models.TextField()  # WhatsApp message
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+
+# Optional: Add a model to track sent messages (if you want to keep a log)
+class UserMessageLog(models.Model):
+    user = models.ForeignKey(WhatsappUser, on_delete=models.CASCADE)
+    rule = models.ForeignKey(AutomationRule, on_delete=models.CASCADE)
+    message_content = models.TextField()
+    sent_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "user_message_log"

@@ -1,6 +1,7 @@
 import os
 from django.http import HttpResponse
 from rest_framework.views import APIView
+from rest_framework import viewsets
 from rest_framework.response import Response
 from rest_framework import status
 from django.utils.timezone import now
@@ -8,6 +9,7 @@ from django.views.decorators.csrf import csrf_exempt
 from django.utils.decorators import method_decorator
 
 from whatsapp.serializers import (
+    AutomationRuleSerializer,
     UserAssessmentAttemptSerializer,
     UserAssessmentAttemptWithResponsesSerializer,
     UserEnrollmentSerializer,
@@ -21,7 +23,7 @@ from .services.user import WhatsappUserService
 from .services.messaging import WhatsAppService
 from .services.onboarding_manager import OnboardingManager
 from .services.orientation_manager import OrientationManager
-from .models import UserAssessmentAttempt, UserEnrollment, WhatsappUser
+from .models import AutomationRule, UserAssessmentAttempt, UserEnrollment, WhatsappUser
 
 import asyncio
 import httpx
@@ -479,6 +481,92 @@ class WhatsAppBroadcastView(APIView):
                 "success": True,
                 "message": message,
                 "data": {"sent_count": sent_count, "failed_users": failed_users},
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+@method_decorator(csrf_exempt, name="dispatch")
+class AutomationRuleViewSet(viewsets.ModelViewSet):
+    permission_classes = []
+    authentication_classes = []
+    queryset = AutomationRule.objects.all().order_by("-created_at")
+    serializer_class = AutomationRuleSerializer
+
+    def list(self, request, *args, **kwargs):
+        queryset = self.get_queryset()
+        serializer = self.get_serializer(queryset, many=True)
+        return Response(
+            {
+                "success": True,
+                "message": "Automation rules fetched successfully",
+                "data": serializer.data,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+    def retrieve(self, request, *args, **kwargs):
+        instance = self.get_object()
+        serializer = self.get_serializer(instance)
+        return Response(
+            {
+                "success": True,
+                "message": "Automation rule fetched successfully",
+                "data": serializer.data,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        if serializer.is_valid():
+            serializer.save()
+            return Response(
+                {
+                    "success": True,
+                    "message": "Automation rule created successfully",
+                    "data": serializer.data,
+                },
+                status=status.HTTP_201_CREATED,
+            )
+        return Response(
+            {
+                "success": False,
+                "error": serializer.errors,
+            },
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    def update(self, request, *args, **kwargs):
+        partial = kwargs.pop("partial", False)
+        instance = self.get_object()
+        serializer = self.get_serializer(instance, data=request.data, partial=partial)
+        if serializer.is_valid():
+            serializer.save()
+            return Response(
+                {
+                    "success": True,
+                    "message": "Automation rule updated successfully",
+                    "data": serializer.data,
+                },
+                status=status.HTTP_200_OK,
+            )
+        return Response(
+            {
+                "success": False,
+                "error": serializer.errors,
+            },
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    def destroy(self, request, *args, **kwargs):
+        instance = self.get_object()
+        instance.delete()
+        return Response(
+            {
+                "success": True,
+                "message": "Automation rule deleted successfully",
+                "data": "Deleted",
             },
             status=status.HTTP_200_OK,
         )

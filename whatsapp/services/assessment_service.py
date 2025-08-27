@@ -285,7 +285,11 @@ class UserAssessmentService:
 
     @classmethod
     def evaluate_short_answer_question(
-        cls, question, user_input, use_ai=True, similarity_threshold=0.8
+        cls,
+        question: AssessmentQuestion,
+        user_input,
+        use_ai=True,
+        similarity_threshold=0.8,
     ):
         """
         Evaluate a short answer question with AI-powered flexible matching.
@@ -313,7 +317,7 @@ class UserAssessmentService:
         # If exact match fails and AI evaluation is enabled
         if use_ai:
             return cls.ai_interpreter._ai_evaluate_short_answer(
-                question_text=question.text,
+                question_text=question.question_text,
                 user_answer=user_input,
                 correct_answer=question.correct_answer,
                 threshold=similarity_threshold,
