@@ -1,5 +1,5 @@
 from django.db import models
-from courses.models import Assessment, AssessmentQuestion, Course, Module
+from courses.models import Assessment, AssessmentQuestion, Course, Module, Topic
 import uuid
 
 # Choices for gender, education, etc.
@@ -209,6 +209,7 @@ class UserEnrollment(models.Model):
 class ModuleDeliveryProgress(models.Model):
     STATE_CHOICES = [
         ("not_started", "Not Started"),
+        ("content_delivering", "Content Delivering"),
         ("content_delivered", "Content Delivered"),
         ("quiz_delivered", "Quiz Delivered"),
         ("quiz_completed", "Quiz Completed"),
@@ -223,6 +224,14 @@ class ModuleDeliveryProgress(models.Model):
     module = models.ForeignKey(
         Module, on_delete=models.CASCADE, related_name="delivery_progress"
     )
+    current_topic = models.ForeignKey(
+        Topic,
+        on_delete=models.CASCADE,
+        related_name="current_topic",
+        default=None,
+        null=True,
+    )
+
     state = models.CharField(
         max_length=50, choices=STATE_CHOICES, default="not_started"
     )
@@ -314,7 +323,6 @@ class AutomationRule(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
 
 
-# Optional: Add a model to track sent messages (if you want to keep a log)
 class UserMessageLog(models.Model):
     user = models.ForeignKey(WhatsappUser, on_delete=models.CASCADE)
     rule = models.ForeignKey(AutomationRule, on_delete=models.CASCADE)

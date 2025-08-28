@@ -103,6 +103,24 @@ class AIResponseInterpreter:
             logger.exception("Error in analyze_next_step")
             return {"next_step": None, "message_to_user": "Something went wrong."}
 
+    def get_ai_answer(self, prompt: str) -> str:
+        """
+        Wrapper for answering user questions with AI (alias for answer_user_question).
+        """
+        try:
+            response = self.client.chat.completions.create(
+                model="gpt-4",
+                messages=[
+                    {"role": "system", "content": "You are a helpful tutor."},
+                    {"role": "user", "content": prompt},
+                ],
+                temperature=0.5,
+            )
+            return response.choices[0].message.content.strip()
+        except Exception as e:
+            logger.exception("Error in get_ai_answer")
+            return None
+
     def extract_answer(
         self, question: str, response: str, environment_context: str = ""
     ) -> dict:
@@ -158,6 +176,7 @@ class AIResponseInterpreter:
 
             1. 'greeting' - General greetings, gratitude, or polite phrases (e.g., "hello", "thanks").
             2. 'continue' - Signals readiness to move forward (e.g., "ready", "next", "go ahead").
+            3. 'Repeat' - Signals to send the same content again. (e.g., "repeat", "send again")
             3. 'assessment' - Mentions assessments explicitly (e.g., "assessment", "test time").
             5. 'module' - Requests specific learning content or lessons (e.g., "show module", "study material").
             6. 'question' - Asks a question *about the course*, the module, the subject, or related topics (e.g., "what is this course about?", "does this cover science?").

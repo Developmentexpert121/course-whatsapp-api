@@ -182,13 +182,54 @@ class CourseDeliveryManager:
             print(f"[Handling offer quiz or content][state:{state}]")
             # User can request quiz-skip or content\
             if intent == "continue":
-                self._offer_quiz_or_content(user_waid=user_waid, enrollment=enrollment)
-            # elif intent == "quiz":
-            #     # TODO: Pending functionality
-            #     print("[Handling quiz request]")
-            #     self.start_module_quiz(user_waid, enrollment)
-            #     enrollment.conversation_state = "in_quiz"
-            #     enrollment.save()
+                # will check progress
+                if enrollment and enrollment.current_module:
+                    print("[Enrollment and current module found in enrollment]")
+                    module_progress = self.module_delivery_service.get_progress(
+                        enrollment=enrollment, module=enrollment.current_module
+                    )
+                    if module_progress:
+                        print(
+                            f"[Module progress found with state][{module_progress.state}]"
+                        )
+
+                        # if status is topic_delivering then we deliver next topic
+                        if module_progress.state == "content_delivering":
+                            self.send_next_topic(
+                                user_waid=user_waid, enrollment=enrollment
+                            )
+
+                        # if status is not started then go with sending first topic
+                        if module_progress.state == "not_started":
+                            self.send_next_topic(
+                                user_waid=user_waid, enrollment=enrollment
+                            )
+
+                        # if content_delivered then tell user to go with assessment
+                        if module_progress.state == "content_delivered":
+                            self._send_message(
+                                user_waid=user_waid,
+                                message=f"✅ You’ve completed all topics in *{module_progress.module.title}*!\n\n"
+                                "Type 'Assessment' to start the module assessment.",
+                            )
+                    else:
+                        print("[Module progress not found]")
+                        self._offer_quiz_or_content(
+                            user_waid=user_waid, enrollment=enrollment
+                        )
+
+                else:
+                    print(
+                        "[Enrollment not found or current module not found in enrollment]"
+                    )
+                    self._offer_quiz_or_content(
+                        user_waid=user_waid, enrollment=enrollment
+                    )
+            elif intent == "question":
+                self.answer_user_query(
+                    user_waid=user_waid, enrollment=enrollment, user_input=user_input
+                )
+
             elif intent == "assessment":
                 print("[Handling assessment request]")
                 if enrollment.current_module:
@@ -218,7 +259,7 @@ class CourseDeliveryManager:
                 print("[Handling unknown request]")
                 self._send_message(
                     user_waid,
-                    "Would you like to start the MODULE? Reply 'Continue learning'.",
+                    "Would you like to begin the module?\nReply **MODULE**. \n\n Or, to take the quiz, \nreply **ASSESSMENT**.",
                 )
             return
 
@@ -250,7 +291,7 @@ class CourseDeliveryManager:
 
     # ------- Friendly Tutor AI --------
 
-    def answer_user_query(self, user, enrollment, user_input):
+    def answer_user_query(self, user_waid: str, enrollment: UserEnrollment, user_input):
         """
         Use AI to answer user questions based on course/module context.
         This method is kept separate from analyze/extract logic.
@@ -260,21 +301,45 @@ class CourseDeliveryManager:
             enrollment.current_module.title if enrollment.current_module else None
         )
 
-        context = f"The student is enrolled in the course '{course_name}'."
+        context = f"""The student is enrolled in the course '{course_name}', 
+        course title: {course_name} 
+        category: {enrollment.course.category}
+        level: {enrollment.course.level}
+        description: {enrollment.course.description}        
+        ."""
         if module_title:
-            context += f" They are currently on the module '{module_title}'."
+            context += f"""They are currently on the module '{module_title}'.
+            module title: {enrollment.current_module.title}
+            content: {enrollment.current_module.content}
+            """
+            module_delivery = self.module_delivery_service.get_progress(
+                enrollment=enrollment, module=enrollment.current_module
+            )
+            if module_delivery:
+                current_topic = module_delivery.current_topic
+
+                if current_topic:
+                    context += f"""
+                    Have read the topic: '{current_topic.title}'
+                    topic title: {current_topic.title}
+                    content: {current_topic.content}
+                    """
 
         try:
             ai_prompt = (
                 f"{context}\n\n"
                 f"The student asked: '{user_input}'\n"
                 "Provide a helpful, concise, and clear explanation. "
-                "If the question is unrelated or unclear, politely ask them to rephrase."
+                "If the question is unrelated or unclear, politely ask them to rephrase and dont answer that unrelated question."
             )
 
-            response = self.ai_interpreter.get_ai_answer(
-                ai_prompt
-            )  # TODO: implementation pending
+            print("[USER QUESTION PROMPT]:", ai_prompt)
+
+            response = self.ai_interpreter.get_ai_answer(ai_prompt)
+
+            response += "\n\n Type 'Continue' for next topic or 'Repeat' to see the topic again."
+
+            self._send_message(user_waid=user_waid, message=response)
             return (
                 response or "That's a great question! Let me get back to you on that."
             )
@@ -315,7 +380,7 @@ class CourseDeliveryManager:
         enrollment.save()
 
     def send_module_content(self, user_waid, module):
-        message = f"📚 *{module.title}*\n\n{module.content}\n\nType 'Assessment' when you've finished this module."
+        message = f"📚 *{module.title}*\n\n{module.content}\n\nType 'Next' when you're ready for next topic."
         self._send_message(user_waid, message)
 
     # Course skip quiz
@@ -567,15 +632,42 @@ class CourseDeliveryManager:
             print("[Starting next module]:", current_module.title)
 
             # Send the module content to the user
-            self.module_delivery_service.mark_content_delivered(
-                enrollment=enrollment, module=current_module
-            )
+            # self.module_delivery_service.mark_content_delivered(
+            #     enrollment=enrollment, module=current_module
+            # )
             self.send_module_content(user_waid, current_module)
+            self.module_delivery_service.reset_progress(enrollment=enrollment)
+
+            # self.send_next_topic(user_waid, enrollment)
 
         except Exception as e:
             logger.exception(f"Failed to start next module for {user_waid}")
             self._send_message(
                 user_waid, "⚠️ Failed to start next module. Please try again."
+            )
+
+    def send_next_topic(self, user_waid: str, enrollment: UserEnrollment):
+        module = enrollment.current_module
+        if not module:
+            self._send_message(user_waid, "⚠️ No active module found.")
+            return
+
+        progress = self.module_delivery_service.deliver_next_topic(enrollment, module)
+
+        if progress.current_topic:
+            topic = progress.current_topic
+            message = (
+                f"📖 *{module.title} - {topic.title}*\n\n{topic.content}\n\n"
+                "Type 'Continue' for next or 'Repeat' to see again."
+            )
+            self._send_message(user_waid, message)
+
+        elif progress.state == "content_delivered":
+            # All topics done
+            self._send_message(
+                user_waid,
+                f"✅ You’ve completed all topics in *{module.title}*!\n\n"
+                "Type 'Assessment' to start the module assessment.",
             )
 
     def complete_module_and_continue(self, user_waid: str, module: Module) -> None:

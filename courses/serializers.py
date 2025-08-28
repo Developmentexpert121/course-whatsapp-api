@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import Course, CourseDescription, CourseDescriptionImage, Module, Assessment, AssessmentQuestion, Topic
+from .models import Course, Module, Assessment, AssessmentQuestion, Topic
 
 
 class CourseSerializer(serializers.ModelSerializer):
@@ -17,10 +17,12 @@ class CourseSerializer(serializers.ModelSerializer):
             "tags",
             "is_active",
         ]
+
+
 class TopicSerializer(serializers.ModelSerializer):
     topic_id = serializers.UUIDField(read_only=True)
     module_id = serializers.UUIDField(write_only=True, required=True)
-    
+
     class Meta:
         model = Topic
         fields = [
@@ -33,31 +35,34 @@ class TopicSerializer(serializers.ModelSerializer):
             "created_at",
             "updated_at",
         ]
-    
+
     def create(self, validated_data):
         # Extract module_id from validated_data
-        module_id = validated_data.pop('module_id')
-        
+        module_id = validated_data.pop("module_id")
+
         # Get the module instance
         try:
             module = Module.objects.get(module_id=module_id)
         except Module.DoesNotExist:
             raise serializers.ValidationError("Module not found")
-        
+
         # Create the topic
         topic = Topic.objects.create(module=module, **validated_data)
         return topic
-    
+
     def update(self, instance, validated_data):
         # If module_id is provided in update, it's not allowed
-        if 'module_id' in validated_data:
-            raise serializers.ValidationError("Cannot change module of an existing topic")
-        
+        if "module_id" in validated_data:
+            raise serializers.ValidationError(
+                "Cannot change module of an existing topic"
+            )
+
         # Update the topic instance
         for attr, value in validated_data.items():
             setattr(instance, attr, value)
         instance.save()
         return instance
+
 
 class ModuleSerializer(serializers.ModelSerializer):
     course = CourseSerializer(read_only=True)
@@ -73,7 +78,7 @@ class ModuleSerializer(serializers.ModelSerializer):
             "order",
             "created_at",
             "updated_at",
-            "topics", 
+            "topics",
         ]
 
 
@@ -110,5 +115,3 @@ class AssessmentSerializer(serializers.ModelSerializer):
             "type",
             "questions",
         ]
-        
-
