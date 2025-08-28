@@ -1,3 +1,9 @@
+import tempfile
+import os
+import uuid
+
+import logging
+from django.conf import settings
 from django.shortcuts import render
 from django.http import HttpResponse
 from rest_framework.views import APIView
@@ -5,12 +11,18 @@ from rest_framework.response import Response
 from rest_framework import status
 from django.utils.decorators import method_decorator
 from django.views.decorators.csrf import csrf_exempt
+from rest_framework.parsers import MultiPartParser, FormParser
 from .services.course import CourseService
 from .services.modules import ModuleService
 from .services.assesments import AssessmentService
 from .services.topics import TopicService
 from .serializers import TopicSerializer 
+from .services.image_service import ImageService
+from .models import CourseDescription, CourseDescriptionImage
+from rest_framework.parsers import MultiPartParser, FormParser
 
+
+logger = logging.getLogger(__name__)
 
 # Create your views here.
 def home(request):
@@ -135,7 +147,100 @@ class CourseView(APIView):
                 },
                 status=status.HTTP_400_BAD_REQUEST,
             )
+@method_decorator(csrf_exempt, name="dispatch")
+class CourseDescriptionImageUploadView(APIView):
+    authentication_classes = []
+    permission_classes = []
+    parser_classes = [MultiPartParser, FormParser]
 
+    def post(self, request, course_id, description_id):
+        print(f"[INFO] Entered post() | course_id={course_id}, description_id={description_id}")
+
+        # validate description belongs to course
+        try:
+            desc = CourseDescription.objects.get(
+                description_id=description_id, 
+                course__course_id=course_id
+            )
+            print(f"[INFO] Found CourseDescription: {desc}")
+        except CourseDescription.DoesNotExist:
+            print(f"[ERROR] Description not found for course_id={course_id}, description_id={description_id}")
+            return Response({"success": False, "error": "Description not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        files = request.FILES.getlist("images") or request.FILES.getlist("image") or []
+        print(f"[INFO] Number of files received: {len(files)}")
+
+        created = []
+
+        for f in files:
+            try:
+                print(f"[INFO] Processing file: {f.name}, size={f.size}, content_type={getattr(f, 'content_type', None)}")
+
+                # Build a deterministic key
+                s3_folder = f"images/course_descriptions/{course_id}/{description_id}"
+                s3_key = f"{s3_folder}/{uuid.uuid4().hex}_{f.name}"
+                print(f"[DEBUG] Generated S3 key: {s3_key}")
+
+                # optionally set content type
+                content_type = getattr(f, "content_type", None)
+
+                # Upload via ImageService
+                upload_res = ImageService.upload_fileobj_to_s3(
+                    f, s3_key, content_type=content_type, acl=None
+                )
+                print(f"[INFO] Upload response: {upload_res}")
+
+                image_url = upload_res["url"]
+                stored_key = upload_res["key"]
+
+                # create DB record
+                img = CourseDescriptionImage.objects.create(
+                    description=desc,
+                    image_url=image_url,
+                    s3_key=stored_key,
+                    caption=request.POST.get("caption", "") or "",
+                )
+                print(f"[INFO] Created CourseDescriptionImage: image_id={img.image_id}")
+
+                created.append({
+                    "imageId": str(img.image_id),
+                    "imageUrl": image_url,
+                    "s3Key": stored_key
+                })
+            except Exception as e:
+                print(f"[ERROR] Failed to upload description image: {e}")
+                logger.exception("Failed to upload description image: %s", e)
+                return Response(
+                    {"success": False, "error": "Server error uploading file: " + str(e)},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
+
+        print(f"[INFO] Upload process completed | Total uploaded: {len(created)}")
+        return Response({"success": True, "data": created}, status=status.HTTP_201_CREATED)
+
+
+
+@method_decorator(csrf_exempt, name="dispatch")
+class CourseDescriptionImageDeleteView(APIView):
+    authentication_classes = []
+    permission_classes = []
+
+    def delete(self, request, course_id, description_id, image_id):
+        try:
+            img = CourseDescriptionImage.objects.get(
+                image_id=image_id,
+                description__description_id=description_id,
+                description__course__course_id=course_id,
+            )
+        except CourseDescriptionImage.DoesNotExist:
+            return Response({"success": False, "error": "Image not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        # Try to delete from S3 if we have s3_key
+        if img.s3_key:
+            ImageService.delete_from_s3(img.s3_key)
+
+        img.delete()
+        return Response({"success": True, "message": "Image deleted"}, status=status.HTTP_200_OK)
 
 @method_decorator(csrf_exempt, name="dispatch")
 class ModuleView(APIView):

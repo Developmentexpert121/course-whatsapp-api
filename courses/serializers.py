@@ -2,13 +2,48 @@ from rest_framework import serializers
 from .models import Course, Module, Assessment, AssessmentQuestion, Topic
 
 
+class CourseDescriptionImageSerializer(serializers.ModelSerializer):
+    imageId = serializers.UUIDField(source="image_id", read_only=True)
+    imageUrl = serializers.CharField(source="image_url", read_only=True)
+    caption = serializers.CharField(read_only=True)
+
+    class Meta:
+        model = CourseDescriptionImage
+        fields = ("imageId", "imageUrl", "caption", "created_at")
+
+
+class CourseDescriptionSerializer(serializers.ModelSerializer):
+    descriptionId = serializers.UUIDField(source="description_id", read_only=True)
+    images = CourseDescriptionImageSerializer(
+        many=True, source="images", read_only=True
+    )
+    text = serializers.CharField(source="text")
+    order = serializers.IntegerField(source="order")
+
+    class Meta:
+        model = CourseDescription
+        fields = (
+            "descriptionId",
+            "text",
+            "order",
+            "images",
+            "created_at",
+            "updated_at",
+        )
+
+
 class CourseSerializer(serializers.ModelSerializer):
+    descriptions = CourseDescriptionSerializer(
+        many=True, source="descriptions", read_only=True
+    )
+
     class Meta:
         model = Course
         fields = [
             "course_id",
             "course_name",
             "description",
+            "descriptions",
             "category",
             "created_at",
             "updated_at",
@@ -16,7 +51,18 @@ class CourseSerializer(serializers.ModelSerializer):
             "level",
             "tags",
             "is_active",
+            "descriptions",
         ]
+
+
+class CourseDescriptionImageSerializer(serializers.ModelSerializer):
+    imageId = serializers.UUIDField(source="image_id", read_only=True)
+    imageUrl = serializers.CharField(source="image_url", read_only=True)
+    caption = serializers.CharField(read_only=True)
+
+    class Meta:
+        model = CourseDescriptionImage
+        fields = ["imageId", "imageUrl", "caption", "created_at"]
 
 
 class TopicSerializer(serializers.ModelSerializer):

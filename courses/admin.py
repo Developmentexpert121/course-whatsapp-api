@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import Course, Module, Assessment, AssessmentQuestion, Topic
+from .models import Course, CourseDescription, CourseDescriptionImage, Module, Assessment, AssessmentQuestion, Topic
 
 # Register your models here.
 admin.site.register(Course)
@@ -7,3 +7,5 @@ admin.site.register(Module)
 admin.site.register(Assessment)
 admin.site.register(AssessmentQuestion)
 admin.site.register(Topic)
+admin.site.register(CourseDescription)
+admin.site.register(CourseDescriptionImage)

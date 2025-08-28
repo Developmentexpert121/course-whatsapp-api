@@ -1,8 +1,11 @@
 import logging
 from typing import Dict
-from courses.models import Course
+import uuid
+from courses.models import Course, CourseDescription, CourseDescriptionImage
 from django.db import transaction
 from courses.services.modules import ModuleService
+from django.db.models import Max
+from ..models import CourseDescription, CourseDescriptionImage
 
 logger = logging.getLogger(__name__)
 
@@ -10,10 +13,35 @@ class CourseService:
     @classmethod
     def to_dict(cls, course):
         """Convert Course model instance to dictionary"""
+        descriptions = []
+        for d in course.descriptions.order_by("order").all():
+            images = []
+            for img in d.images.all():
+                images.append(
+                    {
+                        "imageId": str(img.image_id),
+                        "imageUrl": img.image_url,
+                        "caption": img.caption,
+                        "createdAt": img.created_at,
+                    }
+                )
+
+            descriptions.append(
+                {
+                    "descriptionId": str(d.description_id),
+                    "text": d.text,
+                    "order": d.order,
+                    "createdAt": d.created_at,
+                    "updatedAt": d.updated_at,
+                    "images": images,
+                }
+            )
+
         return {
             "courseId": course.course_id,
             "courseName": course.course_name,
             "description": course.description,
+            "descriptions": descriptions,
             "category": course.category,
             "createdAt": course.created_at,
             "updatedAt": course.updated_at,
@@ -62,17 +90,67 @@ class CourseService:
                     "level": data.get("level"),
                     "tags": data.get("tags", []),
                     "is_active": data.get("isActive", True),
+                    
                 },
             )
+                # Process descriptions if provided
+            incoming = data.get("descriptions", None)
+            if incoming is not None:
+                    # Map existing descriptions by id for quick lookup
+                    existing = {str(d.description_id): d for d in course.descriptions.all()}
+                    kept_ids = []
+
+                    for idx, d in enumerate(incoming):
+                        desc_id = d.get("descriptionId")
+                        text = d.get("text", "")
+                        order = d.get("order", idx + 1)
+
+                        if desc_id:
+                            # update existing if present
+                            existing_obj = existing.get(str(desc_id))
+                            if existing_obj:
+                                existing_obj.text = text
+                                existing_obj.order = order
+                                existing_obj.save()
+                                kept_ids.append(str(existing_obj.description_id))
+                            else:
+                                # incoming id doesn't match any existing -> create new
+                                newd = CourseDescription.objects.create(course=course, text=text, order=order)
+                                kept_ids.append(str(newd.description_id))
+                        else:
+                            # create new description
+                            newd = CourseDescription.objects.create(course=course, text=text, order=order)
+                            kept_ids.append(str(newd.description_id))
+
+                    # delete descriptions that were removed from incoming
+                    if kept_ids:
+                        course.descriptions.exclude(description_id__in=kept_ids).delete()
+                    else:
+                        # empty list incoming -> remove all
+                        course.descriptions.all().delete()
+
             action = "created" if created else "updated"
             return {
                 "success": True,
                 "data": cls.to_dict(course),
                 "message": f"Course {action} successfully",
             }
+
         except Exception as e:
-            logger.exception(f"Error creating/updating course {course_id}")
+            logger.exception(f"Error creating/updating course {course_id}: {e}")
             return {"success": False, "data": None, "error": str(e)}
+
+
+    @classmethod
+    def _renumber_descriptions(cls, course):
+        from courses.models import CourseDescription
+        descriptions = CourseDescription.objects.filter(course=course).order_by("order")
+        for order, desc in enumerate(descriptions, start=1):
+            if desc.order != order:
+                desc.order = order
+                desc.save()
+
+
 
     @classmethod
     def delete_course(cls, course_id):
