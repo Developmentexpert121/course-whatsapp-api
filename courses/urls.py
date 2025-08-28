@@ -1,5 +1,5 @@
 from django.urls import path
-from .views import CourseDuplicateView, CourseView, ModuleDuplicateView, ModuleView, AssesmentView, AssesmentListView, TopicDuplicateView, TopicReorderView, TopicView, home
+from .views import CourseDuplicateView, CourseView, ModuleDuplicateView, ModuleView, AssesmentView, AssesmentListView, TopicDuplicateView, TopicReorderView, TopicView, home, CourseDescriptionImageUploadView, CourseDescriptionImageDeleteView
 
 # prefixed by courses/
 urlpatterns = [
@@ -45,4 +45,6 @@ urlpatterns = [
     path("<str:course_id>/duplicate/", CourseDuplicateView.as_view(), name="course-duplicate"),
     path("<str:course_id>/modules/<str:module_id>/duplicate/", ModuleDuplicateView.as_view(), name="module-duplicate"),
     path("<str:course_id>/modules/<str:module_id>/topics/<str:topic_id>/duplicate/", TopicDuplicateView.as_view(), name="topic-duplicate"),
+    path("<str:course_id>/descriptions/<str:description_id>/images/", CourseDescriptionImageUploadView.as_view(), name="course-description-images"),
+    path("<str:course_id>/descriptions/<str:description_id>/images/<str:image_id>/", CourseDescriptionImageDeleteView.as_view(), name="description-image-delete"),
 ]

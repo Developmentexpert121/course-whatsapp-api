@@ -24,6 +24,32 @@ class Course(models.Model):
 
     def __str__(self):
         return self.course_name
+    
+class CourseDescription(models.Model):
+    description_id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    course = models.ForeignKey("Course", related_name="descriptions", on_delete=models.CASCADE)
+    text = models.TextField(blank=True, null=True)
+    order = models.PositiveIntegerField(default=1)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["order"]
+
+    def __str__(self):
+        return f"Description {self.order} for {self.course.course_name}"
+    
+class CourseDescriptionImage(models.Model):
+    image_id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    description = models.ForeignKey(CourseDescription, related_name="images", on_delete=models.CASCADE)
+    image_url = models.TextField()
+    s3_key = models.TextField(blank=True, null=True)  
+    caption = models.CharField(max_length=255, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"Image for {self.description.description_id}"
+
 
 
 class Module(models.Model):
