@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import os
 from django.utils import timezone
@@ -97,6 +98,7 @@ class CourseDeliveryManager:
         descriptions = []
         message = ""
 
+        print("DESCRIPTIONS", res.get("data", []))
         if res.get("success"):
             descriptions = res.get("data", [])
             message = (
@@ -111,9 +113,22 @@ class CourseDeliveryManager:
 
         if len(descriptions) >= current_step:
             next_description = descriptions[current_step - 1]
-            message = next_description["text"]  # assuming dict objects
-        else:
+            images = next_description.get("images", [])
+            message = f"{next_description["text"]} \n\n Reply NEXT to continue"
+            if images:
+                # send multiple images + one message
+                self.whatsapp_service.send_images_with_message(
+                    phone_number_id=self.phone_number_id,
+                    to=user_waid,
+                    images=next_description.get("images", []),
+                    message=message,
+                )
+            else:
+                # only send the text
+                self._send_message(user_waid=user_waid, message=message)
 
+        else:
+            # no more descriptions, send modules overview and update state
             message = (
                 f"📖 *Modules Overview:*\n{module_titles}\n\n"
                 f"👉 Let's begin your learning journey!\n"
@@ -123,13 +138,12 @@ class CourseDeliveryManager:
             UserEnrollment.update_introduction_state(
                 enrollment_id=enrollment.id, state="delivered"
             )
-            enrollment = UserEnrollment.objects.get(
-                id=enrollment.id
-            )  # reload with fresh state
+            enrollment = UserEnrollment.objects.get(id=enrollment.id)  # reload
             enrollment.conversation_state = "offer_quiz_or_content"
             enrollment.save(update_fields=["conversation_state"])
 
-        self._send_message(user_waid=user_waid, message=message)
+            self._send_message(user_waid=user_waid, message=message)
+
         UserEnrollment.increment_intro_step(enrollment_id=enrollment.id)
 
     # --- Main state-loop handler ---
