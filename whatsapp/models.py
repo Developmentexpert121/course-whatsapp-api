@@ -1,5 +1,6 @@
+from django.utils import timezone
 from django.db import models
-from courses.models import Assessment, AssessmentQuestion, Course, Module
+from courses.models import Assessment, AssessmentQuestion, Course, Module, Topic
 import uuid
 
 # Choices for gender, education, etc.
@@ -39,6 +40,7 @@ class WhatsappUser(models.Model):
     last_active = models.DateTimeField()
     full_name = models.CharField(max_length=255)
     email = models.EmailField(blank=True, null=True)
+    email_verified = models.BooleanField(default=False)
     is_active = models.BooleanField(default=True)
 
     # Onboarding tracking
@@ -54,6 +56,10 @@ class WhatsappUser(models.Model):
     )
     onboarding_step = models.PositiveSmallIntegerField(default=0)
     onboarding_completed_at = models.DateTimeField(null=True, blank=True)
+
+    otp_code = models.CharField(max_length=6, null=True, blank=True)
+    otp_expires_at = models.DateTimeField(null=True, blank=True)
+    otp_attempts = models.IntegerField(default=0)
 
     # Orientation tracking
     orientation_status = models.CharField(
@@ -136,6 +142,11 @@ class UserEnrollment(models.Model):
         ("completed", "Completed"),
         ("paused", "Paused"),
     ]
+    INTRO_CHOICES = [
+        ("not_started", "Not Started"),
+        ("delivered", "Delivered"),
+        ("delivering", "Delivering"),
+    ]
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     user = models.ForeignKey(
@@ -157,6 +168,11 @@ class UserEnrollment(models.Model):
     certificate_url = models.URLField(
         max_length=500, blank=True, null=True
     )  # Link to PDF in S3
+
+    introduction = models.CharField(
+        max_length=20, choices=INTRO_CHOICES, default="not_started"
+    )
+    on_intro_step = models.PositiveIntegerField(default=0)
 
     # Current position tracking
     current_module = models.ForeignKey(
@@ -200,10 +216,66 @@ class UserEnrollment(models.Model):
     def get_level_display(self):
         return "Level {}".format(self.progress)
 
+    @classmethod
+    def update_introduction_state(cls, enrollment_id: str, state: str):
+        """
+        Update the 'introduction' state for a given enrollment.
+        Only allows valid INTRO_CHOICES.
+        """
+        print(
+            f"[DEBUG] Requested state update → enrollment_id={enrollment_id}, new_state={state}"
+        )
+
+        valid_states = [choice[0] for choice in cls.INTRO_CHOICES]
+        print(f"[DEBUG] Valid intro states: {valid_states}")
+
+        if state not in valid_states:
+            raise ValueError(f"Invalid state '{state}'. Must be one of {valid_states}")
+
+        try:
+            enrollment = cls.objects.get(id=enrollment_id)
+            print(
+                f"[DEBUG] Found enrollment: {enrollment.id}, current_state={enrollment.introduction}"
+            )
+        except cls.DoesNotExist:
+            raise ValueError(f"Enrollment with id {enrollment_id} not found")
+
+        if enrollment.introduction != state:
+            print(
+                f"[DEBUG] Updating state from '{enrollment.introduction}' → '{state}'"
+            )
+            enrollment.introduction = state
+            enrollment.save(update_fields=["introduction", "last_accessed"])
+            print(
+                f"[DEBUG] State updated successfully. New state={enrollment.introduction}"
+            )
+        else:
+            print(f"[DEBUG] No update needed. State already '{state}'")
+
+        return enrollment
+
+    @classmethod
+    def increment_intro_step(cls, enrollment_id: str, step: int = 1):
+        """
+        Safely increments the 'on_intro_step' counter for a given enrollment.
+        Default increment is 1.
+        """
+        try:
+            enrollment = cls.objects.get(id=enrollment_id)
+        except cls.DoesNotExist:
+            raise ValueError(f"Enrollment with id {enrollment_id} not found")
+
+        enrollment.on_intro_step = (enrollment.on_intro_step or 0) + step
+        enrollment.last_accessed = timezone.now()
+        enrollment.save(update_fields=["on_intro_step", "last_accessed"])
+
+        return enrollment.on_intro_step
+
 
 class ModuleDeliveryProgress(models.Model):
     STATE_CHOICES = [
         ("not_started", "Not Started"),
+        ("content_delivering", "Content Delivering"),
         ("content_delivered", "Content Delivered"),
         ("quiz_delivered", "Quiz Delivered"),
         ("quiz_completed", "Quiz Completed"),
@@ -218,6 +290,14 @@ class ModuleDeliveryProgress(models.Model):
     module = models.ForeignKey(
         Module, on_delete=models.CASCADE, related_name="delivery_progress"
     )
+    current_topic = models.ForeignKey(
+        Topic,
+        on_delete=models.CASCADE,
+        related_name="current_topic",
+        default=None,
+        null=True,
+    )
+
     state = models.CharField(
         max_length=50, choices=STATE_CHOICES, default="not_started"
     )
@@ -299,3 +379,21 @@ class UserQuestionResponse(models.Model):
 
     def __str__(self):
         return f"Response to {self.question_text_snapshot[:50]}"
+
+
+class AutomationRule(models.Model):
+    name = models.CharField(max_length=100)
+    days_inactive = models.PositiveIntegerField(default=2)  # e.g. 2 days
+    message_template = models.TextField()  # WhatsApp message
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+
+class UserMessageLog(models.Model):
+    user = models.ForeignKey(WhatsappUser, on_delete=models.CASCADE)
+    rule = models.ForeignKey(AutomationRule, on_delete=models.CASCADE)
+    message_content = models.TextField()
+    sent_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "user_message_log"

@@ -22,6 +22,7 @@ class AssessmentService:
                     "questionText": q.question_text,
                     "marks": q.marks,
                     "options": q.options if q.type == "mcq" else None,
+                    "correctAnswer": q.correct_answer if q.type == "open" else None,
                 }
                 for q in assessment.questions.all()
             ],
@@ -72,6 +73,9 @@ class AssessmentService:
                     question_text=q.get("questionText"),
                     marks=q.get("marks", 0),
                     options=q.get("options") if q.get("type") == "mcq" else None,
+                    correct_answer=(
+                        q.get("correctAnswer") if q.get("type") == "open" else None
+                    ),
                 )
             return {
                 "success": True,
@@ -155,6 +159,9 @@ class AssessmentService:
                         question_text=q.get("questionText"),
                         marks=q.get("marks", 0),
                         options=q.get("options") if q.get("type") == "mcq" else None,
+                        correct_answer=(
+                            q.get("correctAnswer") if q.get("type") == "open" else None
+                        ),
                     )
 
             return {

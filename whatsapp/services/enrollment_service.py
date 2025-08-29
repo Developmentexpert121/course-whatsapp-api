@@ -8,13 +8,13 @@ class EnrollmentService:
     def enroll_user_in_course(user: WhatsappUser, course_id: str):
         """Enroll a user in a new course"""
         course = Course.objects.get(pk=course_id)
-        first_module = course.modules.order_by("order").first()
+        # first_module = course.modules.order_by("order").first()
 
         with transaction.atomic():
             enrollment = UserEnrollment.objects.create(
                 user=user,
                 course=course,
-                current_module=first_module,
+                # current_module=first_module,
                 enrollment_date=datetime.now(),
                 last_accessed=datetime.now(),
             )

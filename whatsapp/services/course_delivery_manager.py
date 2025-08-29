@@ -1,6 +1,9 @@
 import logging
 import os
 from django.utils import timezone
+import os
+import tempfile
+from courses.services.course import CourseService
 from whatsapp.models import (
     WhatsappUser,
     UserEnrollment,
@@ -12,10 +15,11 @@ from courses.services.modules import ModuleService
 from courses.services.assesments import AssessmentService
 from whatsapp.services.assessment_service import UserAssessmentService
 from whatsapp.services.cretificates_service import CertificateService
+from whatsapp.services.emailing_service import EmailService
 from whatsapp.services.module_delivery_service import ModuleDeliveryProgressService
 from whatsapp.services.post_course_manager import PostCourseManager
-
-
+import requests
+import tempfile
 from .enrollment_service import EnrollmentService
 from .messaging import WhatsAppService
 from whatsapp.services.ai_reponse_interpreter import AIResponseInterpreter
@@ -23,11 +27,22 @@ from whatsapp.services.ai_reponse_interpreter import AIResponseInterpreter
 logger = logging.getLogger(__name__)
 
 
+def download_temp_file(url: str, suffix=".pdf") -> str:
+    response = requests.get(url, stream=True)
+    response.raise_for_status()
+
+    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+        for chunk in response.iter_content(chunk_size=8192):
+            tmp.write(chunk)
+        return tmp.name
+
+
 class CourseDeliveryManager:
     """Manages the delivery of course content and assessments to users"""
 
     def __init__(self, phone_number_id: str):
         self.phone_number_id = phone_number_id
+        self.course_service = CourseService()
         self.module_service = ModuleService()
         self.assessment_service = AssessmentService()
         self.enrollment_service = EnrollmentService()
@@ -36,6 +51,7 @@ class CourseDeliveryManager:
         self.user_assessment_service = UserAssessmentService()
         self.module_delivery_service = ModuleDeliveryProgressService()
         self.ceritficates_service = CertificateService()
+        self.email_service = EmailService()
         self.post_course_manager = PostCourseManager(phone_number_id=phone_number_id)
 
     def welcome_user_to_course(self, user_waid: str, enrollment: UserEnrollment):
@@ -43,12 +59,8 @@ class CourseDeliveryManager:
         course = enrollment.course
         modules = course.modules.all()
         num_modules = modules.count()
-        module_titles = "\n".join(
-            [f"  • {i+1}. {m.title}" for i, m in enumerate(modules)]
-        )
 
         course_name = course.course_name
-        course_description = course.description
         category = course.category
         level = course.level
         duration = course.duration_in_weeks
@@ -61,15 +73,64 @@ class CourseDeliveryManager:
             f"⏳ *Duration:* {duration} week(s)\n"
             f"📦 *Modules:* {num_modules} module(s)\n"
             f"🏷️ *Tags:* {tags}\n\n"
-            f"📝 *About this course:*\n{course_description}\n\n"
-            f"📖 *Modules Overview:*\n{module_titles}\n\n"
-            f"👉 Let's begin your learning journey!\n"
-            f"Reply with READY to start with course."
+            f" Reply NEXT to continue"
         )
 
         WhatsAppService.send_message(self.phone_number_id, user_waid, welcome_message)
-        enrollment.conversation_state = "offer_quiz_or_content"
-        enrollment.save()
+        UserEnrollment.update_introduction_state(
+            enrollment_id=enrollment.id, state="delivering"
+        )
+        UserEnrollment.increment_intro_step(enrollment_id=enrollment.id)
+
+    def deliver_intro(self, enrollment: UserEnrollment, user_waid: str):
+        course = enrollment.course
+        modules = course.modules.all()
+        module_titles = "\n".join(
+            [f"  • {i+1}. {m.title}" for i, m in enumerate(modules)]
+        )
+
+        current_step = enrollment.on_intro_step
+        res = self.course_service.get_descriptions_by_course_id(
+            enrollment.course.course_id
+        )
+
+        descriptions = []
+        message = ""
+
+        if res.get("success"):
+            descriptions = res.get("data", [])
+            message = (
+                f"📖 *Modules Overview:*\n{module_titles}\n\n"
+                f"👉 Let's begin your learning journey!\n"
+                f"Reply with READY to start the course."
+            )
+
+        print(
+            f"Length of descriptions:{len(descriptions)}, current_step: {current_step}"
+        )
+
+        if len(descriptions) >= current_step:
+            next_description = descriptions[current_step - 1]
+            message = next_description["text"]  # assuming dict objects
+        else:
+
+            message = (
+                f"📖 *Modules Overview:*\n{module_titles}\n\n"
+                f"👉 Let's begin your learning journey!\n"
+                f"Reply with READY to start the course."
+            )
+            print("[Updating introduction state]: Delivered")
+            UserEnrollment.update_introduction_state(
+                enrollment_id=enrollment.id, state="delivered"
+            )
+            enrollment = UserEnrollment.objects.get(
+                id=enrollment.id
+            )  # reload with fresh state
+            enrollment.conversation_state = "offer_quiz_or_content"
+            enrollment.save(update_fields=["conversation_state"])
+
+        self._send_message(user_waid=user_waid, message=message)
+        UserEnrollment.increment_intro_step(enrollment_id=enrollment.id)
 
     # --- Main state-loop handler ---
 
@@ -121,6 +182,15 @@ class CourseDeliveryManager:
             self.process_assessment_response(user_waid, user_input)
             return
 
+        if enrollment.introduction != "delivered":
+            if intent == "continue":
+                self.deliver_intro(enrollment=enrollment, user_waid=user_waid)
+            if intent != "continue":
+                self._send_message(
+                    user_waid,
+                    "You're currently in the course introduction. To move ahead, reply with 'CONTINUE'.",
+                )
+            return
         # 4. State-specific conversational handling
         state = getattr(enrollment, "conversation_state", "idle")
 
@@ -168,13 +238,54 @@ class CourseDeliveryManager:
             print(f"[Handling offer quiz or content][state:{state}]")
             # User can request quiz-skip or content\
             if intent == "continue":
-                self._offer_quiz_or_content(user_waid=user_waid, enrollment=enrollment)
-            # elif intent == "quiz":
-            #     # TODO: Pending functionality
-            #     print("[Handling quiz request]")
-            #     self.start_module_quiz(user_waid, enrollment)
-            #     enrollment.conversation_state = "in_quiz"
-            #     enrollment.save()
+                # will check progress
+                if enrollment and enrollment.current_module:
+                    print("[Enrollment and current module found in enrollment]")
+                    module_progress = self.module_delivery_service.get_progress(
+                        enrollment=enrollment, module=enrollment.current_module
+                    )
+                    if module_progress:
+                        print(
+                            f"[Module progress found with state][{module_progress.state}]"
+                        )
+
+                        # if status is topic_delivering then we deliver next topic
+                        if module_progress.state == "content_delivering":
+                            self.send_next_topic(
+                                user_waid=user_waid, enrollment=enrollment
+                            )
+
+                        # if status is not started then go with sending first topic
+                        if module_progress.state == "not_started":
+                            self.send_next_topic(
+                                user_waid=user_waid, enrollment=enrollment
+                            )
+
+                        # if content_delivered then tell user to go with assessment
+                        if module_progress.state == "content_delivered":
+                            self._send_message(
+                                user_waid=user_waid,
+                                message=f"✅ You’ve completed all topics in *{module_progress.module.title}*!\n\n"
+                                "Type 'Assessment' to start the module assessment.",
+                            )
+                    else:
+                        print("[Module progress not found]")
+                        self._offer_quiz_or_content(
+                            user_waid=user_waid, enrollment=enrollment
+                        )
+
+                else:
+                    print(
+                        "[Enrollment not found or current module not found in enrollment]"
+                    )
+                    self._offer_quiz_or_content(
+                        user_waid=user_waid, enrollment=enrollment
+                    )
+            elif intent == "question":
+                self.answer_user_query(
+                    user_waid=user_waid, enrollment=enrollment, user_input=user_input
+                )
+
             elif intent == "assessment":
                 print("[Handling assessment request]")
                 if enrollment.current_module:
@@ -204,7 +315,7 @@ class CourseDeliveryManager:
                 print("[Handling unknown request]")
                 self._send_message(
                     user_waid,
-                    "Would you like to start the MODULE? Reply 'Continue learning'.",
+                    "Would you like to begin the module?\nReply **MODULE**. \n\n Or, to take the quiz, \nreply **ASSESSMENT**.",
                 )
             return
 
@@ -236,7 +347,7 @@ class CourseDeliveryManager:
 
     # ------- Friendly Tutor AI --------
 
-    def answer_user_query(self, user, enrollment, user_input):
+    def answer_user_query(self, user_waid: str, enrollment: UserEnrollment, user_input):
         """
         Use AI to answer user questions based on course/module context.
         This method is kept separate from analyze/extract logic.
@@ -246,21 +357,45 @@ class CourseDeliveryManager:
             enrollment.current_module.title if enrollment.current_module else None
         )
 
-        context = f"The student is enrolled in the course '{course_name}'."
+        context = f"""The student is enrolled in the course '{course_name}', 
+        course title: {course_name} 
+        category: {enrollment.course.category}
+        level: {enrollment.course.level}
+        description: {enrollment.course.description}        
+        ."""
         if module_title:
-            context += f" They are currently on the module '{module_title}'."
+            context += f"""They are currently on the module '{module_title}'.
+            module title: {enrollment.current_module.title}
+            content: {enrollment.current_module.content}
+            """
+            module_delivery = self.module_delivery_service.get_progress(
+                enrollment=enrollment, module=enrollment.current_module
+            )
+            if module_delivery:
+                current_topic = module_delivery.current_topic
+
+                if current_topic:
+                    context += f"""
+                    Have read the topic: '{current_topic.title}'
+                    topic title: {current_topic.title}
+                    content: {current_topic.content}
+                    """
 
         try:
             ai_prompt = (
                 f"{context}\n\n"
                 f"The student asked: '{user_input}'\n"
                 "Provide a helpful, concise, and clear explanation. "
-                "If the question is unrelated or unclear, politely ask them to rephrase."
+                "If the question is unrelated or unclear, politely ask them to rephrase and dont answer that unrelated question."
             )
 
-            response = self.ai_interpreter.get_ai_answer(
-                ai_prompt
-            )  # TODO: implementation pending
+            print("[USER QUESTION PROMPT]:", ai_prompt)
+
+            response = self.ai_interpreter.get_ai_answer(ai_prompt)
+
+            response += "\n\n Type 'Continue' for next topic or 'Repeat' to see the topic again."
+
+            self._send_message(user_waid=user_waid, message=response)
             return (
                 response or "That's a great question! Let me get back to you on that."
             )
@@ -295,13 +430,18 @@ class CourseDeliveryManager:
 
         self._send_message(
             user_waid,
-            f"Up next in your learning path: {next_module.title} from the course {enrollment.course.course_name}️.\n\nBefore diving in, you have two options:\n\n• Type quiz to attempt a quick test and skip the module if you pass.\n\n• Or type module to start learning right away!\n\nLet me know how you’d like to proceed.",
+            f"✨ Coming up next in your learning path: *{next_module.title}* from the course *{enrollment.course.course_name}*.\n\n"
+            "You have two choices:\n\n"
+            "📝 *Type QUIZ* – Take a quick test. If you pass, you can skip this module.\n\n"
+            "📘 *Type MODULE* – Jump straight into the learning material.\n\n"
+            "👉 How would you like to continue?",
         )
+
         enrollment.conversation_state = "offer_quiz_or_content"
         enrollment.save()
 
     def send_module_content(self, user_waid, module):
-        message = f"📚 *{module.title}*\n\n{module.content}\n\nType 'Assessment' when you've finished this module."
+        message = f"📚 *{module.title}*\n\n{module.content}\n\nType 'Next' when you're ready for next topic."
         self._send_message(user_waid, message)
 
     # Course skip quiz
@@ -553,15 +693,42 @@ class CourseDeliveryManager:
             print("[Starting next module]:", current_module.title)
 
             # Send the module content to the user
-            self.module_delivery_service.mark_content_delivered(
-                enrollment=enrollment, module=current_module
-            )
+            # self.module_delivery_service.mark_content_delivered(
+            #     enrollment=enrollment, module=current_module
+            # )
             self.send_module_content(user_waid, current_module)
+            self.module_delivery_service.reset_progress(enrollment=enrollment)
+
+            # self.send_next_topic(user_waid, enrollment)
 
         except Exception as e:
             logger.exception(f"Failed to start next module for {user_waid}")
             self._send_message(
                 user_waid, "⚠️ Failed to start next module. Please try again."
+            )
+
+    def send_next_topic(self, user_waid: str, enrollment: UserEnrollment):
+        module = enrollment.current_module
+        if not module:
+            self._send_message(user_waid, "⚠️ No active module found.")
+            return
+
+        progress = self.module_delivery_service.deliver_next_topic(enrollment, module)
+
+        if progress.current_topic:
+            topic = progress.current_topic
+            message = (
+                f"📖 *{module.title} - {topic.title}*\n\n{topic.content}\n\n"
+                "Type 'Continue' for next or 'Repeat' to see again."
+            )
+            self._send_message(user_waid, message)
+
+        elif progress.state == "content_delivered":
+            # All topics done
+            self._send_message(
+                user_waid,
+                f"✅ You’ve completed all topics in *{module.title}*!\n\n"
+                "Type 'Assessment' to start the module assessment.",
             )
 
     def complete_module_and_continue(self, user_waid: str, module: Module) -> None:
@@ -645,6 +812,37 @@ class CourseDeliveryManager:
                 file_url=certificate_url,
                 filename=f"certificate_{enrollment.course.course_name}",
             )
+
+            if user.email:
+                subject = f"🎓 Your Certificate for {enrollment.course.course_name}"
+                body = (
+                    f"Dear {user.full_name},\n\n"
+                    f"Congratulations on completing the course *{enrollment.course.course_name}*!\n\n"
+                    "Attached is your certificate of completion.\n\n"
+                    "Keep learning!\nWAppStudy Team"
+                )
+
+                temp_file_path = None
+                try:
+                    # Download certificate locally
+                    temp_file_path = download_temp_file(certificate_url, suffix=".pdf")
+
+                    # Send email with attachment
+                    self.email_service.send_email_with_file(
+                        subject=subject,
+                        body=body,
+                        to=[user.email],
+                        attachments=[temp_file_path],
+                    )
+
+                except Exception:
+                    logger.exception(
+                        f"Failed to send certificate email to {user.email}"
+                    )
+                finally:
+                    # Cleanup local file
+                    if temp_file_path and os.path.exists(temp_file_path):
+                        os.remove(temp_file_path)
 
             self.post_course_manager.start(user_waid=user_waid)
 

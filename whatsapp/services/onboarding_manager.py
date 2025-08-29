@@ -1,10 +1,13 @@
+from datetime import timedelta
 import logging
 import os
+import random
 import httpx
 from whatsapp.models import WhatsappUser
 from django.utils import timezone
 
 from whatsapp.services.ai_reponse_interpreter import AIResponseInterpreter
+from whatsapp.services.emailing_service import EmailService
 from .messaging import WhatsAppService
 from .orientation_manager import OrientationManager
 
@@ -20,6 +23,10 @@ class OnboardingManager:
     ]
 
     interpreter = AIResponseInterpreter(api_key=os.getenv("OPENAI_API_KEY"))
+
+    @classmethod
+    def generate_otp(cls):
+        return str(random.randint(100000, 999999))
 
     @classmethod
     def start_onboarding(
@@ -60,44 +67,68 @@ class OnboardingManager:
             raise
 
     @classmethod
-    def process_response(
-        cls, phone_number_id: str, user_waid: str, user_response: str
-    ) -> httpx.Response:
-        """Process user's response to onboarding questions"""
+    def process_response(cls, phone_number_id: str, user_waid: str, user_response: str):
         try:
             user = WhatsappUser.objects.get(whatsapp_id=user_waid)
             current_step = user.onboarding_step
 
+            # OTP handling flow
+            if user.email and not user.email_verified:
+                return cls._handle_email_verification(
+                    phone_number_id, user, user_response.strip()
+                )
+
+            # Normal onboarding questions
             if current_step >= len(cls.ONBOARDING_QUESTIONS):
                 return cls._complete_onboarding(phone_number_id, user_waid)
 
-            # Save response to user profile
             question = cls.ONBOARDING_QUESTIONS[current_step]["question"]
 
             result = cls.interpreter.extract_answer(
                 question=question,
                 response=user_response.strip(),
-                environment_context="User is currently answering onboarding phase questions. Kindly validate the reponses also",
+                environment_context="User is answering onboarding questions. Validate the response.",
             )
+
             if result["answer"]:
                 property_name = cls.ONBOARDING_QUESTIONS[current_step]["property"]
                 setattr(user, property_name, result["answer"])
+
+                # Special handling for email → send OTP
+                if property_name == "email":
+                    otp = cls.generate_otp()
+                    user.otp_code = otp
+                    user.otp_expires_at = timezone.now() + timedelta(minutes=10)
+                    user.otp_attempts = 0
+                    user.save()
+
+                    body = f"Your OTP code is: {otp}. It expires in 10 minutes."
+
+                    EmailService.send_simple_email("Your OTP", body, [user.email])
+
+                    return WhatsAppService.send_message(
+                        phone_number_id=phone_number_id,
+                        to=user_waid,
+                        message="We’ve sent a 6-digit code to your email. "
+                        "Please reply with the code here.\n\n"
+                        "Type 'RESEND' to get a new code or 'CHANGE EMAIL' to update your email.",
+                    )
+
+                # Continue if not email step
                 user.onboarding_step += 1
                 user.save()
-
-                # Send next question or completion
                 if user.onboarding_step < len(cls.ONBOARDING_QUESTIONS):
                     next_question = cls.ONBOARDING_QUESTIONS[user.onboarding_step][
                         "question"
                     ]
-                    question_num = user.onboarding_step + 1
-                    message = f"{question_num}. {next_question}"
+                    return WhatsAppService.send_message(
+                        phone_number_id=phone_number_id,
+                        to=user_waid,
+                        message=next_question,
+                    )
                 else:
                     return cls._complete_onboarding(phone_number_id, user_waid)
 
-                return WhatsAppService.send_message(
-                    phone_number_id=phone_number_id, to=user_waid, message=message
-                )
             else:
                 return WhatsAppService.send_message(
                     phone_number_id=phone_number_id,
@@ -111,6 +142,62 @@ class OnboardingManager:
         except Exception as e:
             logger.exception(f"Failed to process response from {user_waid}")
             raise
+
+    @classmethod
+    def _handle_email_verification(cls, phone_number_id, user, response: str):
+        """Handle OTP entry / resend / change email"""
+        if response.upper() == "RESEND":
+            otp = cls.generate_otp()
+            user.otp_code = otp
+            user.otp_expires_at = timezone.now() + timedelta(minutes=10)
+            user.save()
+
+            body = f"Your OTP code is: {otp}. It expires in 10 minutes."
+
+            EmailService.send_simple_email("Your OTP", body, [user.email])
+            return WhatsAppService.send_message(
+                phone_number_id,
+                user.whatsapp_id,
+                "✅ A new OTP has been sent to your email.",
+            )
+
+        if response.upper() == "CHANGE EMAIL":
+            user.email = None
+            user.email_verified = False
+            user.onboarding_step = 1  # back to email question
+            user.save()
+            return WhatsAppService.send_message(
+                phone_number_id,
+                user.whatsapp_id,
+                "Please provide your new email address:",
+            )
+
+        # Normal OTP entry
+        if (
+            user.otp_code
+            and response == user.otp_code
+            and user.otp_expires_at > timezone.now()
+        ):
+            user.email_verified = True
+            user.otp_code = None
+            user.save()
+
+            user.onboarding_step += 1
+            user.save()
+
+            WhatsAppService.send_message(
+                phone_number_id, user.whatsapp_id, "✅ Email verified successfully! 🎉"
+            )
+            cls.process_response(phone_number_id, user.whatsapp_id, "")
+        else:
+            user.otp_attempts += 1
+            user.save()
+            return WhatsAppService.send_message(
+                phone_number_id,
+                user.whatsapp_id,
+                "❌ Invalid or expired code. Please try again, type 'RESEND' for a new code, "
+                "or 'CHANGE EMAIL' to use a different email.",
+            )
 
     @classmethod
     def _complete_onboarding(

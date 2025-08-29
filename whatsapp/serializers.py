@@ -3,6 +3,7 @@ from rest_framework import serializers
 from courses.models import Assessment, Course
 from courses.serializers import AssessmentSerializer, CourseSerializer, ModuleSerializer
 from .models import (
+    AutomationRule,
     UserAssessmentAttempt,
     UserQuestionResponse,
     WhatsappUser,
@@ -64,3 +65,20 @@ class UserQuestionResponseSerializer(serializers.ModelSerializer):
     class Meta:
         model = UserQuestionResponse
         fields = "__all__"
+
+
+class AutomationRuleSerializer(serializers.ModelSerializer):
+    daysInactive = serializers.IntegerField(source="days_inactive")
+    messageTemplate = serializers.CharField(source="message_template")
+    isActive = serializers.BooleanField(source="is_active")
+
+    class Meta:
+        model = AutomationRule
+        fields = [
+            "id",
+            "name",
+            "daysInactive",
+            "messageTemplate",
+            "isActive",
+            "created_at",
+        ]

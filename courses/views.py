@@ -16,13 +16,14 @@ from .services.course import CourseService
 from .services.modules import ModuleService
 from .services.assesments import AssessmentService
 from .services.topics import TopicService
-from .serializers import TopicSerializer 
+from .serializers import TopicSerializer
 from .services.image_service import ImageService
 from .models import CourseDescription, CourseDescriptionImage
 from rest_framework.parsers import MultiPartParser, FormParser
 
 
 logger = logging.getLogger(__name__)
+
 
 # Create your views here.
 def home(request):
@@ -147,6 +148,8 @@ class CourseView(APIView):
                 },
                 status=status.HTTP_400_BAD_REQUEST,
             )
+
+
 @method_decorator(csrf_exempt, name="dispatch")
 class CourseDescriptionImageUploadView(APIView):
     authentication_classes = []
@@ -154,18 +157,24 @@ class CourseDescriptionImageUploadView(APIView):
     parser_classes = [MultiPartParser, FormParser]
 
     def post(self, request, course_id, description_id):
-        print(f"[INFO] Entered post() | course_id={course_id}, description_id={description_id}")
+        print(
+            f"[INFO] Entered post() | course_id={course_id}, description_id={description_id}"
+        )
 
         # validate description belongs to course
         try:
             desc = CourseDescription.objects.get(
-                description_id=description_id, 
-                course__course_id=course_id
+                description_id=description_id, course__course_id=course_id
             )
             print(f"[INFO] Found CourseDescription: {desc}")
         except CourseDescription.DoesNotExist:
-            print(f"[ERROR] Description not found for course_id={course_id}, description_id={description_id}")
-            return Response({"success": False, "error": "Description not found"}, status=status.HTTP_404_NOT_FOUND)
+            print(
+                f"[ERROR] Description not found for course_id={course_id}, description_id={description_id}"
+            )
+            return Response(
+                {"success": False, "error": "Description not found"},
+                status=status.HTTP_404_NOT_FOUND,
+            )
 
         files = request.FILES.getlist("images") or request.FILES.getlist("image") or []
         print(f"[INFO] Number of files received: {len(files)}")
@@ -174,7 +183,9 @@ class CourseDescriptionImageUploadView(APIView):
 
         for f in files:
             try:
-                print(f"[INFO] Processing file: {f.name}, size={f.size}, content_type={getattr(f, 'content_type', None)}")
+                print(
+                    f"[INFO] Processing file: {f.name}, size={f.size}, content_type={getattr(f, 'content_type', None)}"
+                )
 
                 # Build a deterministic key
                 s3_folder = f"images/course_descriptions/{course_id}/{description_id}"
@@ -202,22 +213,28 @@ class CourseDescriptionImageUploadView(APIView):
                 )
                 print(f"[INFO] Created CourseDescriptionImage: image_id={img.image_id}")
 
-                created.append({
-                    "imageId": str(img.image_id),
-                    "imageUrl": image_url,
-                    "s3Key": stored_key
-                })
+                created.append(
+                    {
+                        "imageId": str(img.image_id),
+                        "imageUrl": image_url,
+                        "s3Key": stored_key,
+                    }
+                )
             except Exception as e:
                 print(f"[ERROR] Failed to upload description image: {e}")
                 logger.exception("Failed to upload description image: %s", e)
                 return Response(
-                    {"success": False, "error": "Server error uploading file: " + str(e)},
-                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                    {
+                        "success": False,
+                        "error": "Server error uploading file: " + str(e),
+                    },
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 )
 
         print(f"[INFO] Upload process completed | Total uploaded: {len(created)}")
-        return Response({"success": True, "data": created}, status=status.HTTP_201_CREATED)
-
+        return Response(
+            {"success": True, "data": created}, status=status.HTTP_201_CREATED
+        )
 
 
 @method_decorator(csrf_exempt, name="dispatch")
@@ -233,14 +250,20 @@ class CourseDescriptionImageDeleteView(APIView):
                 description__course__course_id=course_id,
             )
         except CourseDescriptionImage.DoesNotExist:
-            return Response({"success": False, "error": "Image not found"}, status=status.HTTP_404_NOT_FOUND)
+            return Response(
+                {"success": False, "error": "Image not found"},
+                status=status.HTTP_404_NOT_FOUND,
+            )
 
         # Try to delete from S3 if we have s3_key
         if img.s3_key:
             ImageService.delete_from_s3(img.s3_key)
 
         img.delete()
-        return Response({"success": True, "message": "Image deleted"}, status=status.HTTP_200_OK)
+        return Response(
+            {"success": True, "message": "Image deleted"}, status=status.HTTP_200_OK
+        )
+
 
 
 @method_decorator(csrf_exempt, name="dispatch")
@@ -287,7 +310,11 @@ class ModuleView(APIView):
     # courses/${courses_id}/modules/             GET will fetch all modules by course id.
     def get(self, request, course_id=None, module_id=None):
         """Get all modules or a specific module by ID"""
-        include_topics = request.query_params.get("includeTopics") in ("1", "true", "True")
+        include_topics = request.query_params.get("includeTopics") in (
+            "1",
+            "true",
+            "True",
+        )
         if module_id:
             # Get single module
             result = ModuleService.get_module(module_id, include_topics=include_topics)
@@ -521,12 +548,13 @@ class AssesmentListView(APIView):
                 {"success": False, "error": result.get("error", "Unknown error")},
                 status=status.HTTP_200_OK,
             )
-            
+
+
 @method_decorator(csrf_exempt, name="dispatch")
 class TopicView(APIView):
     authentication_classes = []
     permission_classes = []
-    
+
     def get(self, request, course_id, module_id, topic_id=None):
         if topic_id:
             result = TopicService.get_topic(topic_id)
@@ -535,12 +563,18 @@ class TopicView(APIView):
 
         if result.get("success"):
             return Response(
-                {"success": True, "message": "Topics fetched successfully", "data": result.get("data")},
+                {
+                    "success": True,
+                    "message": "Topics fetched successfully",
+                    "data": result.get("data"),
+                },
                 status=status.HTTP_200_OK,
             )
         else:
-            return Response({"success": False, "error": result.get("error", "Unknown error")},
-                            status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {"success": False, "error": result.get("error", "Unknown error")},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
     def post(self, request, course_id, module_id, topic_id=None):
         data = request.data.copy()
@@ -588,7 +622,11 @@ class TopicView(APIView):
 
         if result.get("success"):
             return Response(
-                {"success": True, "message": result.get("message"), "data": result.get("data")},
+                {
+                    "success": True,
+                    "message": result.get("message"),
+                    "data": result.get("data"),
+                },
                 status=status.HTTP_200_OK,
             )
         return Response(
@@ -626,17 +664,36 @@ class TopicView(APIView):
             data=payload,
         )
         if result.get("success"):
-            return Response({"success": True, "message": result.get("message"), "data": result.get("data")}, status=status.HTTP_200_OK)
-        return Response({"success": False, "error": result.get("error", "Unknown error")}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {
+                    "success": True,
+                    "message": result.get("message"),
+                    "data": result.get("data"),
+                },
+                status=status.HTTP_200_OK,
+            )
+        return Response(
+            {"success": False, "error": result.get("error", "Unknown error")},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
 
     def delete(self, request, course_id, module_id, topic_id):
         result = TopicService.delete_topic(str(topic_id))
         if result.get("success"):
-            return Response({"success": True, "message": result.get("message"), "data": result.get("data")},
-                            status=status.HTTP_200_OK)
+            return Response(
+                {
+                    "success": True,
+                    "message": result.get("message"),
+                    "data": result.get("data"),
+                },
+                status=status.HTTP_200_OK,
+            )
         else:
-            return Response({"success": False, "error": result.get("error", "Unknown error")},
-                            status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {"success": False, "error": result.get("error", "Unknown error")},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
 
 @method_decorator(csrf_exempt, name="dispatch")
 class TopicReorderView(APIView):
@@ -645,12 +702,20 @@ class TopicReorderView(APIView):
 
     def post(self, request, course_id, module_id):
         ordered_ids = request.data.get("orderedTopicIds", [])
-        result = TopicService.reorder_topics(module_id=str(module_id), ordered_topic_ids=ordered_ids)
+        result = TopicService.reorder_topics(
+            module_id=str(module_id), ordered_topic_ids=ordered_ids
+        )
         if result.get("success"):
-            return Response({"success": True, "message": result.get("message")}, status=status.HTTP_200_OK)
+            return Response(
+                {"success": True, "message": result.get("message")},
+                status=status.HTTP_200_OK,
+            )
         else:
-            return Response({"success": False, "error": result.get("error", "Unknown error")},
-                            status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {"success": False, "error": result.get("error", "Unknown error")},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
 
 @method_decorator(csrf_exempt, name="dispatch")
 class CourseDuplicateView(APIView):
@@ -666,8 +731,18 @@ class CourseDuplicateView(APIView):
             include_topics=bool(include_topics),
         )
         if result.get("success"):
-            return Response({"success": True, "message": result.get("message"), "data": result.get("data")}, status=status.HTTP_200_OK)
-        return Response({"success": False, "error": result.get("error", "Unknown error")}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {
+                    "success": True,
+                    "message": result.get("message"),
+                    "data": result.get("data"),
+                },
+                status=status.HTTP_200_OK,
+            )
+        return Response(
+            {"success": False, "error": result.get("error", "Unknown error")},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
 
 
 @method_decorator(csrf_exempt, name="dispatch")
@@ -684,8 +759,18 @@ class ModuleDuplicateView(APIView):
             include_topics=bool(include_topics),
         )
         if result.get("success"):
-            return Response({"success": True, "message": result.get("message"), "data": result.get("data")}, status=status.HTTP_200_OK)
-        return Response({"success": False, "error": result.get("error", "Unknown error")}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {
+                    "success": True,
+                    "message": result.get("message"),
+                    "data": result.get("data"),
+                },
+                status=status.HTTP_200_OK,
+            )
+        return Response(
+            {"success": False, "error": result.get("error", "Unknown error")},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
 
 
 @method_decorator(csrf_exempt, name="dispatch")
@@ -696,7 +781,19 @@ class TopicDuplicateView(APIView):
     def post(self, request, course_id, module_id, topic_id):
         # duplicate into same module by default; optionally accept destModuleId in body
         dest_module_id = request.data.get("destModuleId", module_id)
-        result = TopicService.duplicate_topic(topic_id=topic_id, dest_module_id=dest_module_id)
+        result = TopicService.duplicate_topic(
+            topic_id=topic_id, dest_module_id=dest_module_id
+        )
         if result.get("success"):
-            return Response({"success": True, "message": result.get("message"), "data": result.get("data")}, status=status.HTTP_200_OK)
-        return Response({"success": False, "error": result.get("error", "Unknown error")}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {
+                    "success": True,
+                    "message": result.get("message"),
+                    "data": result.get("data"),
+                },
+                status=status.HTTP_200_OK,
+            )
+        return Response(
+            {"success": False, "error": result.get("error", "Unknown error")},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
