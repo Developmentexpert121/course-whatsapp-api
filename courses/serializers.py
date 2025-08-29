@@ -22,11 +22,9 @@ class CourseDescriptionImageSerializer(serializers.ModelSerializer):
 
 class CourseDescriptionSerializer(serializers.ModelSerializer):
     descriptionId = serializers.UUIDField(source="description_id", read_only=True)
-    images = CourseDescriptionImageSerializer(
-        many=True, source="images", read_only=True
-    )
-    text = serializers.CharField(source="text")
-    order = serializers.IntegerField(source="order")
+    images = CourseDescriptionImageSerializer(many=True, read_only=True)
+    text = serializers.CharField()
+    order = serializers.IntegerField()
 
     class Meta:
         model = CourseDescription
@@ -41,9 +39,7 @@ class CourseDescriptionSerializer(serializers.ModelSerializer):
 
 
 class CourseSerializer(serializers.ModelSerializer):
-    descriptions = CourseDescriptionSerializer(
-        many=True, source="descriptions", read_only=True
-    )
+    descriptions = CourseDescriptionSerializer(many=True, read_only=True)
 
     class Meta:
         model = Course
