@@ -13,7 +13,7 @@ class Course(models.Model):
         primary_key=True, default=uuid.uuid4, editable=False, unique=True
     )
     course_name = models.CharField(max_length=100)
-    description = models.TextField()
+    description = models.TextField(blank=True, null=True)
     category = models.CharField(max_length=100)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
