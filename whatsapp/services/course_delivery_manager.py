@@ -3,6 +3,7 @@ import os
 from django.utils import timezone
 import os
 import tempfile
+from courses.services.course import CourseService
 from whatsapp.models import (
     WhatsappUser,
     UserEnrollment,
@@ -41,6 +42,7 @@ class CourseDeliveryManager:
 
     def __init__(self, phone_number_id: str):
         self.phone_number_id = phone_number_id
+        self.course_service = CourseService()
         self.module_service = ModuleService()
         self.assessment_service = AssessmentService()
         self.enrollment_service = EnrollmentService()
@@ -57,12 +59,8 @@ class CourseDeliveryManager:
         course = enrollment.course
         modules = course.modules.all()
         num_modules = modules.count()
-        module_titles = "\n".join(
-            [f"  • {i+1}. {m.title}" for i, m in enumerate(modules)]
-        )
 
         course_name = course.course_name
-        course_description = course.description
         category = course.category
         level = course.level
         duration = course.duration_in_weeks
@@ -75,15 +73,64 @@ class CourseDeliveryManager:
             f"⏳ *Duration:* {duration} week(s)\n"
             f"📦 *Modules:* {num_modules} module(s)\n"
             f"🏷️ *Tags:* {tags}\n\n"
-            f"📝 *About this course:*\n{course_description}\n\n"
-            f"📖 *Modules Overview:*\n{module_titles}\n\n"
-            f"👉 Let's begin your learning journey!\n"
-            f"Reply with READY to start with course."
+            f" Reply NEXT to continue"
         )
 
         WhatsAppService.send_message(self.phone_number_id, user_waid, welcome_message)
-        enrollment.conversation_state = "offer_quiz_or_content"
-        enrollment.save()
+        UserEnrollment.update_introduction_state(
+            enrollment_id=enrollment.id, state="delivering"
+        )
+        UserEnrollment.increment_intro_step(enrollment_id=enrollment.id)
+
+    def deliver_intro(self, enrollment: UserEnrollment, user_waid: str):
+        course = enrollment.course
+        modules = course.modules.all()
+        module_titles = "\n".join(
+            [f"  • {i+1}. {m.title}" for i, m in enumerate(modules)]
+        )
+
+        current_step = enrollment.on_intro_step
+        res = self.course_service.get_descriptions_by_course_id(
+            enrollment.course.course_id
+        )
+
+        descriptions = []
+        message = ""
+
+        if res.get("success"):
+            descriptions = res.get("data", [])
+            message = (
+                f"📖 *Modules Overview:*\n{module_titles}\n\n"
+                f"👉 Let's begin your learning journey!\n"
+                f"Reply with READY to start the course."
+            )
+
+        print(
+            f"Length of descriptions:{len(descriptions)}, current_step: {current_step}"
+        )
+
+        if len(descriptions) >= current_step:
+            next_description = descriptions[current_step - 1]
+            message = next_description["text"]  # assuming dict objects
+        else:
+
+            message = (
+                f"📖 *Modules Overview:*\n{module_titles}\n\n"
+                f"👉 Let's begin your learning journey!\n"
+                f"Reply with READY to start the course."
+            )
+            print("[Updating introduction state]: Delivered")
+            UserEnrollment.update_introduction_state(
+                enrollment_id=enrollment.id, state="delivered"
+            )
+            enrollment = UserEnrollment.objects.get(
+                id=enrollment.id
+            )  # reload with fresh state
+            enrollment.conversation_state = "offer_quiz_or_content"
+            enrollment.save(update_fields=["conversation_state"])
+
+        self._send_message(user_waid=user_waid, message=message)
+        UserEnrollment.increment_intro_step(enrollment_id=enrollment.id)
 
     # --- Main state-loop handler ---
 
@@ -135,6 +182,15 @@ class CourseDeliveryManager:
             self.process_assessment_response(user_waid, user_input)
             return
 
+        if enrollment.introduction != "delivered":
+            if intent == "continue":
+                self.deliver_intro(enrollment=enrollment, user_waid=user_waid)
+            if intent != "continue":
+                self._send_message(
+                    user_waid,
+                    "You're currently in the course introduction. To move ahead, reply with 'CONTINUE'.",
+                )
+            return
         # 4. State-specific conversational handling
         state = getattr(enrollment, "conversation_state", "idle")
 
@@ -374,8 +430,13 @@ class CourseDeliveryManager:
 
         self._send_message(
             user_waid,
-            f"Up next in your learning path: {next_module.title} from the course {enrollment.course.course_name}️.\n\nBefore diving in, you have two options:\n\n• Type quiz to attempt a quick test and skip the module if you pass.\n\n• Or type module to start learning right away!\n\nLet me know how you’d like to proceed.",
+            f"✨ Coming up next in your learning path: *{next_module.title}* from the course *{enrollment.course.course_name}*.\n\n"
+            "You have two choices:\n\n"
+            "📝 *Type QUIZ* – Take a quick test. If you pass, you can skip this module.\n\n"
+            "📘 *Type MODULE* – Jump straight into the learning material.\n\n"
+            "👉 How would you like to continue?",
         )
+
         enrollment.conversation_state = "offer_quiz_or_content"
         enrollment.save()
 

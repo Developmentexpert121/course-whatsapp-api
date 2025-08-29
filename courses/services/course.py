@@ -9,6 +9,7 @@ from ..models import CourseDescription, CourseDescriptionImage
 
 logger = logging.getLogger(__name__)
 
+
 class CourseService:
     @classmethod
     def to_dict(cls, course):
@@ -90,44 +91,47 @@ class CourseService:
                     "level": data.get("level"),
                     "tags": data.get("tags", []),
                     "is_active": data.get("isActive", True),
-                    
                 },
             )
-                # Process descriptions if provided
+            # Process descriptions if provided
             incoming = data.get("descriptions", None)
             if incoming is not None:
-                    # Map existing descriptions by id for quick lookup
-                    existing = {str(d.description_id): d for d in course.descriptions.all()}
-                    kept_ids = []
+                # Map existing descriptions by id for quick lookup
+                existing = {str(d.description_id): d for d in course.descriptions.all()}
+                kept_ids = []
 
-                    for idx, d in enumerate(incoming):
-                        desc_id = d.get("descriptionId")
-                        text = d.get("text", "")
-                        order = d.get("order", idx + 1)
+                for idx, d in enumerate(incoming):
+                    desc_id = d.get("descriptionId")
+                    text = d.get("text", "")
+                    order = d.get("order", idx + 1)
 
-                        if desc_id:
-                            # update existing if present
-                            existing_obj = existing.get(str(desc_id))
-                            if existing_obj:
-                                existing_obj.text = text
-                                existing_obj.order = order
-                                existing_obj.save()
-                                kept_ids.append(str(existing_obj.description_id))
-                            else:
-                                # incoming id doesn't match any existing -> create new
-                                newd = CourseDescription.objects.create(course=course, text=text, order=order)
-                                kept_ids.append(str(newd.description_id))
+                    if desc_id:
+                        # update existing if present
+                        existing_obj = existing.get(str(desc_id))
+                        if existing_obj:
+                            existing_obj.text = text
+                            existing_obj.order = order
+                            existing_obj.save()
+                            kept_ids.append(str(existing_obj.description_id))
                         else:
-                            # create new description
-                            newd = CourseDescription.objects.create(course=course, text=text, order=order)
+                            # incoming id doesn't match any existing -> create new
+                            newd = CourseDescription.objects.create(
+                                course=course, text=text, order=order
+                            )
                             kept_ids.append(str(newd.description_id))
-
-                    # delete descriptions that were removed from incoming
-                    if kept_ids:
-                        course.descriptions.exclude(description_id__in=kept_ids).delete()
                     else:
-                        # empty list incoming -> remove all
-                        course.descriptions.all().delete()
+                        # create new description
+                        newd = CourseDescription.objects.create(
+                            course=course, text=text, order=order
+                        )
+                        kept_ids.append(str(newd.description_id))
+
+                # delete descriptions that were removed from incoming
+                if kept_ids:
+                    course.descriptions.exclude(description_id__in=kept_ids).delete()
+                else:
+                    # empty list incoming -> remove all
+                    course.descriptions.all().delete()
 
             action = "created" if created else "updated"
             return {
@@ -140,17 +144,15 @@ class CourseService:
             logger.exception(f"Error creating/updating course {course_id}: {e}")
             return {"success": False, "data": None, "error": str(e)}
 
-
     @classmethod
     def _renumber_descriptions(cls, course):
         from courses.models import CourseDescription
+
         descriptions = CourseDescription.objects.filter(course=course).order_by("order")
         for order, desc in enumerate(descriptions, start=1):
             if desc.order != order:
                 desc.order = order
                 desc.save()
-
-
 
     @classmethod
     def delete_course(cls, course_id):
@@ -263,9 +265,11 @@ class CourseService:
         except Exception as e:
             logger.exception(f"Error updating status for course {course_id}")
             return {"success": False, "error": str(e)}
-        
+
     @classmethod
-    def duplicate_course(cls, course_id: str, include_modules: bool = True, include_topics: bool = True) -> Dict:
+    def duplicate_course(
+        cls, course_id: str, include_modules: bool = True, include_topics: bool = True
+    ) -> Dict:
         """
         Duplicate a course. include_modules controls whether to copy modules,
         include_topics controls whether modules should include topics.
@@ -295,10 +299,44 @@ class CourseService:
                             include_topics=include_topics,
                         )
 
-            return {"success": True, "data": cls.to_dict(duplicated_course), "message": "Course duplicated successfully"}
+            return {
+                "success": True,
+                "data": cls.to_dict(duplicated_course),
+                "message": "Course duplicated successfully",
+            }
         except Course.DoesNotExist:
             return {"success": False, "data": None, "error": "Source course not found"}
         except Exception as e:
             logger.exception(f"Error duplicating course {course_id}")
             return {"success": False, "data": None, "error": str(e)}
 
+    @classmethod
+    def get_descriptions_by_course_id(cls, course_id: str):
+        try:
+            course = Course.objects.get(course_id=course_id)
+            descriptions = []
+
+            for desc in course.descriptions.all().order_by("order"):
+                descriptions.append(
+                    {
+                        "id": str(desc.description_id),
+                        "order": desc.order,
+                        "text": desc.text,
+                        "images": [
+                            {
+                                "id": str(img.image_id),
+                                "url": img.image_url,
+                                "caption": img.caption,
+                            }
+                            for img in desc.images.all()
+                        ],
+                    }
+                )
+
+            return {"success": True, "data": descriptions, "error": None}
+
+        except Course.DoesNotExist:
+            return {"success": False, "data": None, "error": "Course not found"}
+        except Exception as e:
+            logger.exception(f"Error retrieving course {course_id}")
+            return {"success": False, "data": None, "error": str(e)}

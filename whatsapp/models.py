@@ -1,3 +1,4 @@
+from django.utils import timezone
 from django.db import models
 from courses.models import Assessment, AssessmentQuestion, Course, Module, Topic
 import uuid
@@ -141,6 +142,11 @@ class UserEnrollment(models.Model):
         ("completed", "Completed"),
         ("paused", "Paused"),
     ]
+    INTRO_CHOICES = [
+        ("not_started", "Not Started"),
+        ("delivered", "Delivered"),
+        ("delivering", "Delivering"),
+    ]
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     user = models.ForeignKey(
@@ -162,6 +168,11 @@ class UserEnrollment(models.Model):
     certificate_url = models.URLField(
         max_length=500, blank=True, null=True
     )  # Link to PDF in S3
+
+    introduction = models.CharField(
+        max_length=20, choices=INTRO_CHOICES, default="not_started"
+    )
+    on_intro_step = models.PositiveIntegerField(default=0)
 
     # Current position tracking
     current_module = models.ForeignKey(
@@ -204,6 +215,61 @@ class UserEnrollment(models.Model):
 
     def get_level_display(self):
         return "Level {}".format(self.progress)
+
+    @classmethod
+    def update_introduction_state(cls, enrollment_id: str, state: str):
+        """
+        Update the 'introduction' state for a given enrollment.
+        Only allows valid INTRO_CHOICES.
+        """
+        print(
+            f"[DEBUG] Requested state update → enrollment_id={enrollment_id}, new_state={state}"
+        )
+
+        valid_states = [choice[0] for choice in cls.INTRO_CHOICES]
+        print(f"[DEBUG] Valid intro states: {valid_states}")
+
+        if state not in valid_states:
+            raise ValueError(f"Invalid state '{state}'. Must be one of {valid_states}")
+
+        try:
+            enrollment = cls.objects.get(id=enrollment_id)
+            print(
+                f"[DEBUG] Found enrollment: {enrollment.id}, current_state={enrollment.introduction}"
+            )
+        except cls.DoesNotExist:
+            raise ValueError(f"Enrollment with id {enrollment_id} not found")
+
+        if enrollment.introduction != state:
+            print(
+                f"[DEBUG] Updating state from '{enrollment.introduction}' → '{state}'"
+            )
+            enrollment.introduction = state
+            enrollment.save(update_fields=["introduction", "last_accessed"])
+            print(
+                f"[DEBUG] State updated successfully. New state={enrollment.introduction}"
+            )
+        else:
+            print(f"[DEBUG] No update needed. State already '{state}'")
+
+        return enrollment
+
+    @classmethod
+    def increment_intro_step(cls, enrollment_id: str, step: int = 1):
+        """
+        Safely increments the 'on_intro_step' counter for a given enrollment.
+        Default increment is 1.
+        """
+        try:
+            enrollment = cls.objects.get(id=enrollment_id)
+        except cls.DoesNotExist:
+            raise ValueError(f"Enrollment with id {enrollment_id} not found")
+
+        enrollment.on_intro_step = (enrollment.on_intro_step or 0) + step
+        enrollment.last_accessed = timezone.now()
+        enrollment.save(update_fields=["on_intro_step", "last_accessed"])
+
+        return enrollment.on_intro_step
 
 
 class ModuleDeliveryProgress(models.Model):
