@@ -35,6 +35,16 @@ class CourseDescription(models.Model):
 
     class Meta:
         ordering = ["order"]
+        
+    
+    def save(self, *args, **kwargs):
+        if not self.order:
+            # find max order for this course
+            max_order = (
+                CourseDescription.objects.filter(course=self.course).aggregate(models.Max("order"))["order__max"]
+            )
+            self.order = (max_order or 0) + 1
+        super().save(*args, **kwargs)
 
     def __str__(self):
         return f"Description {self.order} for {self.course.course_name}"

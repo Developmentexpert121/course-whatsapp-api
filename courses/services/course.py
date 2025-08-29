@@ -93,10 +93,10 @@ class CourseService:
                     
                 },
             )
-                # Process descriptions if provided
+
             incoming = data.get("descriptions", None)
             if incoming is not None:
-                    # Map existing descriptions by id for quick lookup
+
                     existing = {str(d.description_id): d for d in course.descriptions.all()}
                     kept_ids = []
 
@@ -106,7 +106,7 @@ class CourseService:
                         order = d.get("order", idx + 1)
 
                         if desc_id:
-                            # update existing if present
+
                             existing_obj = existing.get(str(desc_id))
                             if existing_obj:
                                 existing_obj.text = text
@@ -114,19 +114,17 @@ class CourseService:
                                 existing_obj.save()
                                 kept_ids.append(str(existing_obj.description_id))
                             else:
-                                # incoming id doesn't match any existing -> create new
+
                                 newd = CourseDescription.objects.create(course=course, text=text, order=order)
                                 kept_ids.append(str(newd.description_id))
                         else:
-                            # create new description
+
                             newd = CourseDescription.objects.create(course=course, text=text, order=order)
                             kept_ids.append(str(newd.description_id))
 
-                    # delete descriptions that were removed from incoming
                     if kept_ids:
                         course.descriptions.exclude(description_id__in=kept_ids).delete()
                     else:
-                        # empty list incoming -> remove all
                         course.descriptions.all().delete()
 
             action = "created" if created else "updated"
@@ -149,7 +147,6 @@ class CourseService:
             if desc.order != order:
                 desc.order = order
                 desc.save()
-
 
 
     @classmethod
@@ -176,7 +173,6 @@ class CourseService:
             course = Course.objects.get(course_id=course_id)
 
             if is_active:
-                # --- Rule 1: Must have at least one module ---
                 modules = course.modules.all()
                 if not modules.exists():
                     return {
@@ -184,7 +180,6 @@ class CourseService:
                         "error": "Cannot activate course: At least one module is required.",
                     }
 
-                # --- Rule 2: Each module must have one active assessment and one active quiz ---
                 pending_modules = []
 
                 for module in modules:
@@ -212,7 +207,6 @@ class CourseService:
                         + "\n".join(pending_modules),
                     }
 
-            # If all validations pass or course is being deactivated
             course.is_active = is_active
             course.save()
 
@@ -282,13 +276,12 @@ class CourseService:
                     duration_in_weeks=src_course.duration_in_weeks,
                     level=src_course.level,
                     tags=src_course.tags,
-                    is_active=False,  # duplicates start inactive by default
+                    is_active=False,  
                 )
 
                 if include_modules:
                     src_modules = src_course.modules.order_by("order")
                     for mod in src_modules:
-                        # call module duplication, duplicating topics depends on include_topics
                         ModuleService.duplicate_module(
                             module_id=str(mod.module_id),
                             dest_course_id=str(duplicated_course.course_id),

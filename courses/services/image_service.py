@@ -29,7 +29,6 @@ class ImageService:
         s3_client = ImageService._get_s3_client()
         bucket_name = settings.AWS_STORAGE_BUCKET_NAME
 
-        # If file_obj is an in-memory uploaded file, write to temp then upload
         temp_path = None
         try:
             if hasattr(file_obj, "chunks"):
@@ -43,7 +42,6 @@ class ImageService:
             elif isinstance(file_obj, str) and os.path.exists(file_obj):
                 upload_source = file_obj
             else:
-                # If it's a file-like object with read(), write to temp.
                 if hasattr(file_obj, "read"):
                     tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".tmp")
                     tmp.write(file_obj.read())
@@ -57,13 +55,12 @@ class ImageService:
             extra_args = {}
             if content_type:
                 extra_args["ContentType"] = content_type
-            # If you want public objects, set ACL; otherwise keep private and use presigned urls
+
             if acl:
                 extra_args["ACL"] = acl
 
             s3_client.upload_file(upload_source, bucket_name, s3_key, ExtraArgs=extra_args if extra_args else None)
 
-            # Construct public URL (works when bucket/object is public or if you rely on a public bucket policy).
             file_url = f"https://{bucket_name}.s3.{settings.AWS_DEFAULT_REGION}.amazonaws.com/{s3_key}"
             return {"url": file_url, "key": s3_key}
         except Exception as e:

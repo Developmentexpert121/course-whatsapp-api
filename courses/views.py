@@ -242,6 +242,41 @@ class CourseDescriptionImageDeleteView(APIView):
         img.delete()
         return Response({"success": True, "message": "Image deleted"}, status=status.HTTP_200_OK)
 
+
+@method_decorator(csrf_exempt, name="dispatch")
+class CourseDescriptionReorderView(APIView):
+    
+    authentication_classes = []
+    permission_classes = []
+    def post(self, request, course_id):
+        """
+        Reorder course descriptions.
+        Expected payload: { "descriptions": [ { "descriptionId": "...", "order": 1 }, ... ] }
+        """
+        descriptions_data = request.data.get("descriptions", [])
+        if not descriptions_data:
+            return Response(
+                {"success": False, "error": "No descriptions provided"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        try:
+            for d in descriptions_data:
+                desc_id = d.get("descriptionId")
+                order = d.get("order")
+                if desc_id and order is not None:
+                    CourseDescription.objects.filter(
+                        course__course_id=course_id, description_id=desc_id
+                    ).update(order=order)
+
+            return Response(
+                {"success": True, "message": "Descriptions reordered successfully"},
+                status=status.HTTP_200_OK,
+            )
+        except Exception as e:
+            return Response(
+                {"success": False, "error": str(e)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 @method_decorator(csrf_exempt, name="dispatch")
 class ModuleView(APIView):
     authentication_classes = []
