@@ -112,8 +112,8 @@ CORS_ALLOWED_ORIGINS = [
     "http://localhost:8000",  # React frontend
     "http://51.20.205.5:8000",
     "http://whatsapp-bot-admin.s3-website.eu-north-1.amazonaws.com",
-    "https://nikkoworkx.ai/",
-    "https://www.nikkoworkx.ai/",
+    "https://nikkoworkx.ai",
+    "https://www.nikkoworkx.ai",
 ]
 
 CSRF_TRUSTED_ORIGINS = [
@@ -121,8 +121,8 @@ CSRF_TRUSTED_ORIGINS = [
     "http://localhost:4173",
     "http://51.20.205.5:8000",
     "http://whatsapp-bot-admin.s3-website.eu-north-1.amazonaws.com",
-    "https://nikkoworkx.ai/",
-    "https://www.nikkoworkx.ai/",
+    "https://nikkoworkx.ai",
+    "https://www.nikkoworkx.ai",
 ]
 # Password validation
 # https://docs.djangoproject.com/en/5.2/ref/settings/#auth-password-validators
