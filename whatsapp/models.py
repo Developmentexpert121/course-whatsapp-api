@@ -1,6 +1,13 @@
 from django.utils import timezone
 from django.db import models
-from courses.models import Assessment, AssessmentQuestion, Course, Module, Topic
+from courses.models import (
+    Assessment,
+    AssessmentQuestion,
+    Course,
+    Module,
+    Topic,
+    TopicParagraph,
+)
 import uuid
 
 # Choices for gender, education, etc.
@@ -308,6 +315,39 @@ class ModuleDeliveryProgress(models.Model):
 
     def __str__(self):
         return f"{self.enrollment.user} - {self.module} ({self.state})"
+
+
+class TopicDeliveryProgress(models.Model):
+    STATE_CHOICES = [
+        ("not_started", "Not Started"),
+        ("content_delivering", "Content Delivering"),
+        ("content_delivered", "Content Delivered"),
+    ]
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    enrollment = models.ForeignKey(
+        UserEnrollment, on_delete=models.CASCADE, related_name="topic_progress"
+    )
+    topic = models.ForeignKey(
+        Topic, on_delete=models.CASCADE, related_name="topic_delivery_progress"
+    )
+    current_paragraph = models.ForeignKey(
+        TopicParagraph,
+        on_delete=models.CASCADE,
+        related_name="current_paragraph",
+        default=None,
+        null=True,
+    )
+
+    state = models.CharField(
+        max_length=50, choices=STATE_CHOICES, default="not_started"
+    )
+    last_updated = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = ("enrollment", "topic")
+
+    def __str__(self):
+        return f"{self.enrollment.user} - {self.topic} ({self.state})"
 
 
 class UserAssessmentAttempt(models.Model):

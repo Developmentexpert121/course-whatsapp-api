@@ -55,6 +55,8 @@ class CourseDeliveryManager:
         self.email_service = EmailService()
         self.post_course_manager = PostCourseManager(phone_number_id=phone_number_id)
 
+    # ---- Deliver course introduction ----
+
     def welcome_user_to_course(self, user_waid: str, enrollment: UserEnrollment):
         """Sends a detailed welcome message to the user with course information including modules"""
         course = enrollment.course
@@ -146,7 +148,7 @@ class CourseDeliveryManager:
 
         UserEnrollment.increment_intro_step(enrollment_id=enrollment.id)
 
-    # --- Main state-loop handler ---
+    # --- Main state-loop handler : processing user messages ---
 
     def process_user_message(self, user_waid: str, user_input: str) -> None:
         user = WhatsappUser.objects.get(whatsapp_id=user_waid)
@@ -458,6 +460,7 @@ class CourseDeliveryManager:
         message = f"📚 *{module.title}*\n\n{module.content}\n\nType 'Next' when you're ready for next topic."
         self._send_message(user_waid, message)
 
+    # ---- assessment and quiz functionalities ----
     # Course skip quiz
     def start_module_quiz(self, user_waid, enrollment):
         # Note: implement fetching and starting quiz of type='quiz'
@@ -684,6 +687,8 @@ class CourseDeliveryManager:
                 user_waid, "⚠️ Failed to complete assessment. Please try again."
             )
 
+    # ---- Module delivery services ----
+
     def start_module(self, user_waid: str, enrollment: UserEnrollment) -> None:
         """Start the next module for the user by sending its content"""
         try:
@@ -722,28 +727,137 @@ class CourseDeliveryManager:
             )
 
     def send_next_topic(self, user_waid: str, enrollment: UserEnrollment):
+        print(
+            f"[DEBUG] send_next_topic called for user={user_waid}, enrollment={enrollment.id}"
+        )
+
         module = enrollment.current_module
         if not module:
+            print("[DEBUG] No active module found in enrollment")
             self._send_message(user_waid, "⚠️ No active module found.")
             return
+        print(f"[DEBUG] Current module: {module.module_id} - {module.title}")
 
-        progress = self.module_delivery_service.deliver_next_topic(enrollment, module)
+        # find module delivery progress
+        module_delivery_progress = self.module_delivery_service.get_progress(
+            enrollment=enrollment, module=module
+        )
+        print(f"[DEBUG] Module delivery progress: {module_delivery_progress}")
 
-        if progress.current_topic:
-            topic = progress.current_topic
+        current_topic = (
+            module_delivery_progress.current_topic if module_delivery_progress else None
+        )
+        print(
+            f"[DEBUG] Current topic: {getattr(current_topic, 'id', None)} - {getattr(current_topic, 'title', None)}"
+        )
+
+        # get topic delivery progress
+        topic_delivery_progress = None
+        if current_topic:
+            topic_delivery_progress = self.module_delivery_service.get_topic_progress(
+                enrollment=enrollment, topic=current_topic
+            )
+        print(f"[DEBUG] Topic delivery progress: {topic_delivery_progress}")
+
+        if topic_delivery_progress:
+            print(f"[DEBUG] Topic state: {topic_delivery_progress.state}")
+            if topic_delivery_progress.state in ["content_delivering", "not_started"]:
+                # deliver next paragraph
+                topic_delivery_progress = (
+                    self.module_delivery_service.deliver_next_paragraph(
+                        enrollment=enrollment, topic=current_topic
+                    )
+                )
+                print(
+                    f"[DEBUG] Delivered next paragraph. Progress: {topic_delivery_progress}"
+                )
+            elif topic_delivery_progress.state == "content_delivered":
+                # move to next topic
+                print("[DEBUG] Current topic fully delivered. Moving to next topic...")
+                module_delivery_progress = (
+                    self.module_delivery_service.deliver_next_topic(enrollment, module)
+                )
+                print(
+                    f"[DEBUG] New module delivery progress: {module_delivery_progress}"
+                )
+
+                if (
+                    not module_delivery_progress
+                    or not module_delivery_progress.current_topic
+                ):
+                    print("[DEBUG] No more topics left in module.")
+                    self._send_message(
+                        user_waid,
+                        f"✅ You’ve completed all topics in *{module.title}*!\n\n"
+                        "Type 'Assessment' to start the module assessment.",
+                    )
+                    return
+
+                topic_delivery_progress = (
+                    self.module_delivery_service.deliver_next_paragraph(
+                        enrollment=enrollment, topic=current_topic
+                    )
+                )
+                print(
+                    f"[DEBUG] Next topic delivery progress: {topic_delivery_progress}"
+                )
+        else:
+            # start with first topic
+            print("[DEBUG] No topic progress found. Starting with first topic...")
+            module_delivery_progress = self.module_delivery_service.deliver_next_topic(
+                enrollment, module
+            )
+            print(
+                f"[DEBUG] Delivered first topic. Module progress: {module_delivery_progress}"
+            )
+            current_topic = (
+                module_delivery_progress.current_topic
+                if module_delivery_progress
+                else None
+            )
+            if current_topic:
+                topic_delivery_progress = (
+                    self.module_delivery_service.deliver_next_paragraph(
+                        enrollment=enrollment, topic=current_topic
+                    )
+                )
+            else:
+                print("[DEBUG] No current topic found")
+
+            print(f"[DEBUG] First topic progress: {topic_delivery_progress}")
+
+        # send content
+        if topic_delivery_progress and topic_delivery_progress.current_paragraph:
+            paragraph = topic_delivery_progress.current_paragraph
+            print(
+                f"[DEBUG] Sending paragraph: id={paragraph.paragraph_id}, order={paragraph.order}"
+            )
             message = (
-                f"📖 *{module.title} - {topic.title}*\n\n{topic.content}\n\n"
+                f"📖 *{current_topic.title}*\n\n{paragraph.content}\n\n"
                 "Type 'Continue' for next or 'Repeat' to see again."
             )
             self._send_message(user_waid, message)
-
-        elif progress.state == "content_delivered":
-            # All topics done
-            self._send_message(
-                user_waid,
-                f"✅ You’ve completed all topics in *{module.title}*!\n\n"
-                "Type 'Assessment' to start the module assessment.",
+        elif (
+            topic_delivery_progress
+            and topic_delivery_progress.state == "content_delivered"
+        ):
+            module_delivery_progress = self.module_delivery_service.deliver_next_topic(
+                enrollment, module
             )
+
+            if module_delivery_progress.current_topic:
+                self.send_next_topic(enrollment=enrollment, user_waid=user_waid)
+
+            elif (
+                not module_delivery_progress.current_topic
+                and module_delivery_progress.state == "content_delivered"
+            ):
+                print(f"[DEBUG] All content in module={module.title} delivered.")
+                self._send_message(
+                    user_waid,
+                    f"✅ You’ve completed all topics in *{module.title}*!\n\n"
+                    "Type 'Assessment' to start the module assessment.",
+                )
 
     def complete_module_and_continue(self, user_waid: str, module: Module) -> None:
         """Complete the current module and move to the next one"""
@@ -792,6 +906,8 @@ class CourseDeliveryManager:
             self._send_message(
                 user_waid, "⚠️ Failed to move to next module. Please try again."
             )
+
+    # ---- course completion service ----
 
     def complete_course(self, user_waid: str, enrollment: UserEnrollment) -> None:
         """Mark course as completed and provide certificate"""

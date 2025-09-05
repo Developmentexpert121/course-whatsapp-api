@@ -1,7 +1,11 @@
 from django.utils import timezone
 from django.db.models import Max
 from courses.models import Module, Topic
-from whatsapp.models import UserEnrollment, ModuleDeliveryProgress
+from whatsapp.models import (
+    TopicDeliveryProgress,
+    UserEnrollment,
+    ModuleDeliveryProgress,
+)
 import logging
 
 logger = logging.getLogger(__name__)
@@ -23,6 +27,22 @@ class ModuleDeliveryProgressService:
         return progress
 
     @staticmethod
+    def get_or_create_topic_progress(
+        enrollment: UserEnrollment, topic: Topic
+    ) -> TopicDeliveryProgress:
+        """
+        Ensure there is a ModuleDeliveryProgress entry for this enrollment & module.
+        """
+        progress, created = TopicDeliveryProgress.objects.get_or_create(
+            enrollment=enrollment, topic=topic
+        )
+        if created:
+            logger.info(
+                f"Created new progress entry for {enrollment.user} - {topic.title}"
+            )
+        return progress
+
+    @staticmethod
     def get_progress(
         enrollment: UserEnrollment, module: Module
     ) -> ModuleDeliveryProgress | None:
@@ -35,6 +55,19 @@ class ModuleDeliveryProgressService:
                 enrollment=enrollment, module=module
             )
         except ModuleDeliveryProgress.DoesNotExist:
+            return None
+
+    @staticmethod
+    def get_topic_progress(
+        enrollment: UserEnrollment, topic: Topic
+    ) -> TopicDeliveryProgress | None:
+        """
+        Return the existing ModuleDeliveryProgress entry for this enrollment & module.
+        Does not create a new one.
+        """
+        try:
+            return TopicDeliveryProgress.objects.get(enrollment=enrollment, topic=topic)
+        except TopicDeliveryProgress.DoesNotExist:
             return None
 
     @staticmethod
@@ -67,6 +100,10 @@ class ModuleDeliveryProgressService:
             progress.state = "content_delivering"  # still delivering content
             progress.last_updated = timezone.now()
             progress.save()
+            ModuleDeliveryProgressService.get_or_create_topic_progress(
+                enrollment, next_topic
+            )
+
             logger.info(
                 f"Delivered topic '{next_topic.title}' in module '{module.title}' to {enrollment.user}"
             )
@@ -78,6 +115,51 @@ class ModuleDeliveryProgressService:
             progress.save()
             logger.info(
                 f"All topics delivered for module '{module.title}' (user {enrollment.user})"
+            )
+
+        return progress
+
+    @staticmethod
+    def deliver_next_paragraph(enrollment: UserEnrollment, topic: Topic):
+        """
+        Deliver the next topic in the module for the given enrollment.
+        Updates current_topic and state.
+        """
+        progress = ModuleDeliveryProgressService.get_or_create_topic_progress(
+            enrollment, topic
+        )
+
+        # If no para's in this topic
+        paragraphs = topic.paragraphs.all().order_by("order")
+        if not paragraphs.exists():
+            logger.warning(f"No active topics found in module {topic.title}")
+            return progress
+
+        if progress.current_paragraph:
+            # Find the next topic after current one
+            next_para = paragraphs.filter(
+                order__gt=progress.current_paragraph.order
+            ).first()
+        else:
+            # Start with the first topic
+            next_para = paragraphs.first()
+
+        if next_para:
+            progress.current_paragraph = next_para
+            progress.state = "content_delivering"  # still delivering content
+            progress.last_updated = timezone.now()
+            progress.save()
+            logger.info(
+                f"Delivered topic in module '{topic.title}' to {enrollment.user}"
+            )
+        else:
+            # No more topics left → mark module as fully delivered
+            progress.current_paragraph = None
+            progress.state = "content_delivered"
+            progress.last_updated = timezone.now()
+            progress.save()
+            logger.info(
+                f"All topics delivered for module '{topic.title}' (user {enrollment.user})"
             )
 
         return progress

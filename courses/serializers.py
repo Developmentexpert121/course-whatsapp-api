@@ -7,6 +7,7 @@ from .models import (
     Assessment,
     AssessmentQuestion,
     Topic,
+    TopicParagraph,
 )
 
 
@@ -69,9 +70,18 @@ class CourseDescriptionImageSerializer(serializers.ModelSerializer):
         fields = ["imageId", "imageUrl", "caption", "created_at"]
 
 
+class TopicParagraphSerializer(serializers.ModelSerializer):
+    paragraph_id = serializers.UUIDField(read_only=True)
+
+    class Meta:
+        model = TopicParagraph
+        fields = ["paragraph_id", "content", "order"]
+
+
 class TopicSerializer(serializers.ModelSerializer):
     topic_id = serializers.UUIDField(read_only=True)
     module_id = serializers.UUIDField(write_only=True, required=True)
+    paragraphs = TopicParagraphSerializer(many=True, required=False)
 
     class Meta:
         model = Topic
@@ -79,38 +89,51 @@ class TopicSerializer(serializers.ModelSerializer):
             "topic_id",
             "module_id",
             "title",
-            "content",
             "order",
             "is_active",
             "created_at",
             "updated_at",
+            "paragraphs",
         ]
 
     def create(self, validated_data):
-        # Extract module_id from validated_data
         module_id = validated_data.pop("module_id")
+        paragraphs_data = validated_data.pop("paragraphs", [])
 
-        # Get the module instance
+        # Get module
         try:
             module = Module.objects.get(module_id=module_id)
         except Module.DoesNotExist:
             raise serializers.ValidationError("Module not found")
 
-        # Create the topic
+        # Create topic
         topic = Topic.objects.create(module=module, **validated_data)
+
+        # Create related paragraphs
+        for para in paragraphs_data:
+            TopicParagraph.objects.create(topic=topic, **para)
+
         return topic
 
     def update(self, instance, validated_data):
-        # If module_id is provided in update, it's not allowed
         if "module_id" in validated_data:
             raise serializers.ValidationError(
                 "Cannot change module of an existing topic"
             )
 
-        # Update the topic instance
+        paragraphs_data = validated_data.pop("paragraphs", None)
+
+        # Update topic fields
         for attr, value in validated_data.items():
             setattr(instance, attr, value)
         instance.save()
+
+        # Update paragraphs if provided
+        if paragraphs_data is not None:
+            instance.paragraphs.all().delete()  # 🔥 simple reset
+            for para in paragraphs_data:
+                TopicParagraph.objects.create(topic=instance, **para)
+
         return instance
 
 

@@ -24,10 +24,15 @@ class Course(models.Model):
 
     def __str__(self):
         return self.course_name
-    
+
+
 class CourseDescription(models.Model):
-    description_id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    course = models.ForeignKey("Course", related_name="descriptions", on_delete=models.CASCADE)
+    description_id = models.UUIDField(
+        primary_key=True, default=uuid.uuid4, editable=False
+    )
+    course = models.ForeignKey(
+        "Course", related_name="descriptions", on_delete=models.CASCADE
+    )
     text = models.TextField(blank=True, null=True)
     order = models.PositiveIntegerField(default=1)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -35,31 +40,32 @@ class CourseDescription(models.Model):
 
     class Meta:
         ordering = ["order"]
-        
-    
+
     def save(self, *args, **kwargs):
         if not self.order:
             # find max order for this course
-            max_order = (
-                CourseDescription.objects.filter(course=self.course).aggregate(models.Max("order"))["order__max"]
-            )
+            max_order = CourseDescription.objects.filter(course=self.course).aggregate(
+                models.Max("order")
+            )["order__max"]
             self.order = (max_order or 0) + 1
         super().save(*args, **kwargs)
 
     def __str__(self):
         return f"Description {self.order} for {self.course.course_name}"
-    
+
+
 class CourseDescriptionImage(models.Model):
     image_id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    description = models.ForeignKey(CourseDescription, related_name="images", on_delete=models.CASCADE)
+    description = models.ForeignKey(
+        CourseDescription, related_name="images", on_delete=models.CASCADE
+    )
     image_url = models.TextField()
-    s3_key = models.TextField(blank=True, null=True)  
+    s3_key = models.TextField(blank=True, null=True)
     caption = models.CharField(max_length=255, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
         return f"Image for {self.description.description_id}"
-
 
 
 class Module(models.Model):
@@ -143,20 +149,38 @@ class AssessmentQuestion(models.Model):
 
 class Topic(models.Model):
     topic_id = models.UUIDField(
-    primary_key=True, default=uuid.uuid4, editable=False, unique=True)
+        primary_key=True, default=uuid.uuid4, editable=False, unique=True
+    )
     module = models.ForeignKey(
-    Module, on_delete=models.CASCADE, related_name="topics")
+        "courses.Module", on_delete=models.CASCADE, related_name="topics"
+    )
     title = models.CharField(max_length=255)
-    content = models.TextField() 
-    order = models.PositiveIntegerField()  
-    is_active = models.BooleanField(default=True)  
+    order = models.PositiveIntegerField()
+    is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        ordering = ["order"]  
-        unique_together = [("module", "order")] 
+        ordering = ["order"]
+        unique_together = [("module", "order")]
 
     def __str__(self):
         return f"{self.title} (Module: {self.module.title})"
 
+
+class TopicParagraph(models.Model):
+    paragraph_id = models.UUIDField(
+        primary_key=True, default=uuid.uuid4, editable=False, unique=True
+    )
+    topic = models.ForeignKey(
+        Topic, on_delete=models.CASCADE, related_name="paragraphs"
+    )
+    content = models.TextField()  # each paragraph text
+    order = models.PositiveIntegerField(default=1)
+
+    class Meta:
+        ordering = ["order"]
+        unique_together = [("topic", "order")]
+
+    def __str__(self):
+        return f"Paragraph {self.order} of Topic: {self.topic.title}"

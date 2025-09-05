@@ -265,12 +265,12 @@ class CourseDescriptionImageDeleteView(APIView):
         )
 
 
-
 @method_decorator(csrf_exempt, name="dispatch")
 class CourseDescriptionReorderView(APIView):
-    
+
     authentication_classes = []
     permission_classes = []
+
     def post(self, request, course_id):
         """
         Reorder course descriptions.
@@ -300,6 +300,8 @@ class CourseDescriptionReorderView(APIView):
                 {"success": False, "error": str(e)},
                 status=status.HTTP_400_BAD_REQUEST,
             )
+
+
 @method_decorator(csrf_exempt, name="dispatch")
 class ModuleView(APIView):
     authentication_classes = []
@@ -606,7 +608,8 @@ class TopicView(APIView):
 
         payload = {
             "title": data.get("title"),
-            "content": data.get("content"),
+            "content": data.get("content"),  # TODO : Need to pass paragraphs here
+            "paragraphs": data.get("paragraphs"),
             # only include order if parsed successfully, else service will compute
         }
         if order_val is not None:
@@ -652,7 +655,7 @@ class TopicView(APIView):
 
         payload = {
             "title": data.get("title"),
-            "content": data.get("content"),
+            "paragraphs": data.get("paragraphs"),  # TODO : Need to pass paragraphs here
             "order": data.get("order"),
         }
         if is_active_val is not None:
