@@ -80,9 +80,26 @@ class WhatsAppWebhookView(APIView):
             if "messages" in value:
                 message_data = value.get("messages", [{}])[0]
                 from_number = message_data.get("from", "")
-                message_body = message_data.get("text", {}).get("body", "")
                 profile = value.get("contacts", [{}])[0].get("profile", {})
                 whatsapp_name = profile.get("name", "Unknown User")
+
+                message_type = message_data.get("type")
+
+                if message_type == "text":
+                    # Regular text message
+                    message_body = message_data.get("text", {}).get("body", "")
+
+                elif message_type == "interactive":
+                    interactive = message_data.get("interactive", {})
+                    if interactive.get("type") == "button_reply":
+                        message_body = interactive["button_reply"].get("id", "")
+                    elif interactive.get("type") == "list_reply":
+                        message_body = interactive["list_reply"].get("id", "")
+                    else:
+                        message_body = ""
+
+                else:
+                    message_body = ""
 
                 if not from_number or not message_body:
                     logger.error(

@@ -182,8 +182,12 @@ class AIResponseInterpreter:
             6. 'question' - Asks a question *about the course*, the module, the subject, or related topics (e.g., "what is this course about?", "does this cover science?").
             7. 'cancel' - Wants to stop, pause, or cancel the interaction (e.g., "stop", "cancel", "exit").
             8. 'unknown' - If the message doesn't clearly match any category.
+            9. 'prev' - If user ask for prev part (e.g., "prev", "last", "back").
+            10. 'home' - if user ask for home, main menu, menu, more options etc.
+            11. 'course-intro' - If user ask for course introduction (e.g., "intro").
+            12. 'course-progress' - If user ask for course progress (e.g., "progress", "my journey").
 
-            ONLY return one of: greeting, continue, assessment, quiz, module, question, cancel, unknown.
+            ONLY return one of: greeting, continue, assessment, quiz, module, question, cancel, prev, course-intro, course-progress, home, unknown.
 
             Current conversation state: {current_state}
             """
@@ -208,11 +212,14 @@ class AIResponseInterpreter:
             valid_intents = {
                 "greeting",
                 "continue",
-                # "quiz",
                 "assessment",
                 "module",
                 "question",
                 "cancel",
+                "prev",
+                "home",
+                "course-intro",
+                "course-progress",
                 "unknown",
             }
             return intent if intent in valid_intents else "unknown"

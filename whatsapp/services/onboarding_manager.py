@@ -48,7 +48,7 @@ class OnboardingManager:
 
             # Send welcome message
             welcome_msg = (
-                "Welcome to WAppStudy! 🎓\n\n"
+                "Welcome to Nikkoworkx! 🎓\n\n"
                 "Let's get you registered. Please answer these questions:\n\n"
                 f"1. {cls.ONBOARDING_QUESTIONS[0]['question']}"
             )

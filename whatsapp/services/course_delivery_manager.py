@@ -22,6 +22,7 @@ from whatsapp.services.post_course_manager import PostCourseManager
 import requests
 import tempfile
 from .enrollment_service import EnrollmentService
+from django.db.models import Max, Min
 from .messaging import WhatsAppService
 from whatsapp.services.ai_reponse_interpreter import AIResponseInterpreter
 
@@ -76,10 +77,12 @@ class CourseDeliveryManager:
             f"⏳ *Duration:* {duration} week(s)\n"
             f"📦 *Modules:* {num_modules} module(s)\n"
             f"🏷️ *Tags:* {tags}\n\n"
-            f" Reply NEXT to continue"
         )
 
-        WhatsAppService.send_message(self.phone_number_id, user_waid, welcome_message)
+        self.whatsapp_service.send_message(
+            self.phone_number_id, user_waid, welcome_message
+        )
+        self._send_course_intro_continue(user_waid=user_waid)
         UserEnrollment.update_introduction_state(
             enrollment_id=enrollment.id, state="delivering"
         )
@@ -106,7 +109,6 @@ class CourseDeliveryManager:
             message = (
                 f"📖 *Modules Overview:*\n{module_titles}\n\n"
                 f"👉 Let's begin your learning journey!\n"
-                f"Reply with READY to start the course."
             )
 
         print(
@@ -116,7 +118,7 @@ class CourseDeliveryManager:
         if len(descriptions) >= current_step:
             next_description = descriptions[current_step - 1]
             images = next_description.get("images", [])
-            message = f"{next_description["text"]} \n\n Reply NEXT to continue"
+            message = f"{next_description["text"]} \n\n"
             if images:
                 # send multiple images + one message
                 self.whatsapp_service.send_images_with_message(
@@ -125,16 +127,17 @@ class CourseDeliveryManager:
                     images=next_description.get("images", []),
                     message=message,
                 )
+                self._send_course_intro_continue(user_waid=user_waid)
             else:
                 # only send the text
                 self._send_message(user_waid=user_waid, message=message)
+                self._send_course_intro_continue(user_waid=user_waid)
 
         else:
             # no more descriptions, send modules overview and update state
             message = (
                 f"📖 *Modules Overview:*\n{module_titles}\n\n"
                 f"👉 Let's begin your learning journey!\n"
-                f"Reply with READY to start the course."
             )
             print("[Updating introduction state]: Delivered")
             UserEnrollment.update_introduction_state(
@@ -145,8 +148,112 @@ class CourseDeliveryManager:
             enrollment.save(update_fields=["conversation_state"])
 
             self._send_message(user_waid=user_waid, message=message)
+            self._send_course_intro_continue(user_waid=user_waid)
 
         UserEnrollment.increment_intro_step(enrollment_id=enrollment.id)
+
+    #  ---- course home functionalities ----
+
+    def get_course_introduction(
+        self,
+        enrollment: UserEnrollment,
+        user_waid: str,
+    ):
+        """Sends a detailed welcome message to the user with course information including modules"""
+        course = enrollment.course
+        modules = course.modules.all()
+        num_modules = modules.count()
+
+        course_name = course.course_name
+        category = course.category
+        level = course.level
+        duration = course.duration_in_weeks
+        tags = ", ".join(course.tags) if course.tags else "None"
+
+        modules = course.modules.all()
+        module_titles = "\n".join(
+            [f"  • {i+1}. {m.title}" for i, m in enumerate(modules)]
+        )
+
+        message = (
+            f"🎓 *Course: {course_name}*\n"
+            f"📚 *Category:* {category}\n"
+            f"📈 *Level:* {level}\n"
+            f"⏳ *Duration:* {duration} week(s)\n"
+            f"📦 *Modules:* {num_modules} module(s)\n"
+            f"🏷️ *Tags:* {tags}\n"
+            f"📖 *Modules Overview:*\n{module_titles}\n\n"
+            f"👉 Let's begin your learning journey!\n"
+        )
+        WhatsAppService.send_message(self.phone_number_id, user_waid, message)
+
+    def get_course_progress(self, enrollment: UserEnrollment) -> str:
+        course = enrollment.course
+        if not course:
+            return "⚠️ No active course found."
+
+        message_lines = [f"📘 *{course.course_name}* Progress:\n"]
+
+        modules = course.modules.all().order_by("order")
+        for module in modules:
+            module_progress = self.module_delivery_service.get_progress(
+                enrollment, module
+            )
+
+            # decide module status
+            if module_progress:
+                if module_progress.state == "content_delivered":
+                    module_status = "✅"
+                elif module_progress.state == "content_delivering":
+                    module_status = "🟡"
+                else:
+                    module_status = "⚪"
+            else:
+                module_status = "⚪"
+
+            message_lines.append(f"- {module.title} {module_status}")
+
+            # list topics
+            topics = module.topics.all().order_by("order")
+            for topic in topics:
+                topic_progress = self.module_delivery_service.get_topic_progress(
+                    enrollment, topic
+                )
+
+                if topic_progress:
+                    if topic_progress.state == "content_delivered":
+                        topic_status = "✅"
+                    elif topic_progress.state == "content_delivering":
+                        topic_status = "🟡"
+                    else:
+                        topic_status = "⚪"
+                else:
+                    topic_status = "⚪"
+
+                # highlight current topic (if module is delivering and topic is delivering)
+                current_marker = ""
+                if (
+                    module_progress
+                    and module_progress.state == "content_delivering"
+                    and topic_progress
+                    and topic_progress.state == "content_delivering"
+                ):
+                    current_marker = " (currently here)"
+
+                message_lines.append(
+                    f"   - {topic.title} {topic_status}{current_marker}"
+                )
+
+            # module assessment (if exists)
+            if hasattr(module, "assessment") and module.assessment:
+                # assume you track assessment completion in topic_progress-like model
+                assessment_done = getattr(
+                    module_progress, "assessment_completed", False
+                )
+                assessment_status = "✅" if assessment_done else "⚪"
+                message_lines.append(f"   - Assessment {assessment_status}")
+
+        return "\n".join(message_lines)
 
     # --- Main state-loop handler : processing user messages ---
 
@@ -170,7 +277,7 @@ class CourseDeliveryManager:
             print("[Sending greeting message]")
             self._send_message(
                 user_waid,
-                "👋 Hi! I'm your friendly course tutor. Ask me any questions, or type START to continue learning.",
+                "👋 Hi! I'm your friendly course tutor. Ask me any questions.",
             )
 
         # 2. Enrollment missing
@@ -201,12 +308,32 @@ class CourseDeliveryManager:
         if enrollment.introduction != "delivered":
             if intent == "continue":
                 self.deliver_intro(enrollment=enrollment, user_waid=user_waid)
+                return
             if intent != "continue":
-                self._send_message(
-                    user_waid,
-                    "You're currently in the course introduction. To move ahead, reply with 'CONTINUE'.",
-                )
+                self._send_course_intro_continue(user_waid=user_waid)
+                return
+
+        if intent == "home":
+            header = "👋 Welcome back to your learning space!"
+            self.send_universal_home_reply(user_waid=user_waid, header=header)
             return
+
+        if intent == "prev":
+            self.step_back(enrollment=enrollment, user_waid=user_waid)
+            self.send_universal_continue_reply(user_waid=user_waid)
+            return
+
+        if intent == "course-intro":
+            self.get_course_introduction(user_waid=user_waid, enrollment=enrollment)
+            self.send_universal_home_reply(user_waid=user_waid, header="")
+            return
+
+        if intent == "course-progress":
+            course_progress_message = self.get_course_progress(enrollment=enrollment)
+            self._send_message(user_waid=user_waid, message=course_progress_message)
+            self.send_universal_home_reply(user_waid=user_waid, header="")
+            return
+
         # 4. State-specific conversational handling
         state = getattr(enrollment, "conversation_state", "idle")
 
@@ -281,9 +408,9 @@ class CourseDeliveryManager:
                         if module_progress.state == "content_delivered":
                             self._send_message(
                                 user_waid=user_waid,
-                                message=f"✅ You’ve completed all topics in *{module_progress.module.title}*!\n\n"
-                                "Type 'Assessment' to start the module assessment.",
+                                message=f"✅ You’ve completed all topics in *{module_progress.module.title}*!",
                             )
+                            self.send_universal_assessment_reply(user_waid=user_waid)
                     else:
                         print("[Module progress not found]")
                         self._offer_quiz_or_content(
@@ -301,30 +428,37 @@ class CourseDeliveryManager:
                 self.answer_user_query(
                     user_waid=user_waid, enrollment=enrollment, user_input=user_input
                 )
-
             elif intent == "assessment":
                 print("[Handling assessment request]")
-                if enrollment.current_module:
-                    module_progress = (
-                        self.module_delivery_service.get_or_create_progress(
-                            enrollment=enrollment, module=enrollment.current_module
-                        )
-                    )
 
-                    print(module_progress)
+                if not enrollment.current_module:
+                    result = self.enrollment_service.get_next_module(enrollment)
+                    if result["success"]:
+                        if result["next_module"] is not None:
+                            current_module = result["next_module"]
+                            enrollment.current_module = current_module
+                            self.module_delivery_service.get_or_create_progress(
+                                enrollment=enrollment, module=current_module
+                            )
+                            enrollment.save()
 
-                    if module_progress.state == "content_delivered":
-
-                        self.start_module_assessment(user_waid, enrollment)
-                        enrollment.conversation_state = "in_assessment"
-                        enrollment.save()
                     else:
-                        self.start_module_quiz(user_waid, enrollment)
-                        enrollment.conversation_state = "in_assessment"
-                        enrollment.save()
+                        self._send_message(user_waid, "No Current active module found.")
+                        return
 
+                module_progress = self.module_delivery_service.get_or_create_progress(
+                    enrollment=enrollment, module=enrollment.current_module
+                )
+
+                if module_progress.state == "content_delivered":
+
+                    self.start_module_assessment(user_waid, enrollment)
+                    enrollment.conversation_state = "in_assessment"
+                    enrollment.save()
                 else:
-                    self._send_message(user_waid, "No Current active module found.")
+                    self.start_module_quiz(user_waid, enrollment)
+                    enrollment.conversation_state = "in_assessment"
+                    enrollment.save()
             elif intent == "module":
                 self.start_module(user_waid, enrollment)
             else:
@@ -348,8 +482,9 @@ class CourseDeliveryManager:
                 print("[Handling idle]")
                 self._send_message(
                     user_waid,
-                    f"You're on *{enrollment.current_module.title}*. Do you want to CONTINUE, take a QUIZ to skip, or ask something?",
+                    f"You're on *{enrollment.current_module.title}*",
                 )
+                self.send_universal_continue_reply(user_waid=user_waid)
                 enrollment.conversation_state = "offer_quiz_or_content"
                 enrollment.save()
                 return
@@ -358,8 +493,9 @@ class CourseDeliveryManager:
         print(f"[Unknown state][state:{state}]")
         self._send_message(
             user_waid,
-            "Sorry, I didn't get that. Type CONTINUE, QUIZ, or ask a question about the course.",
+            "Sorry, I didn't get that.",
         )
+        self.send_universal_continue_reply(user_waid=user_waid)
 
     # ------- Friendly Tutor AI --------
 
@@ -409,9 +545,8 @@ class CourseDeliveryManager:
 
             response = self.ai_interpreter.get_ai_answer(ai_prompt)
 
-            response += "\n\n Type 'Continue' for next topic or 'Repeat' to see the topic again."
-
             self._send_message(user_waid=user_waid, message=response)
+            self.send_universal_continue_reply(user_waid=user_waid)
             return (
                 response or "That's a great question! Let me get back to you on that."
             )
@@ -424,13 +559,40 @@ class CourseDeliveryManager:
 
     def _send_course_introduction(self, user_waid, enrollment):
         course = enrollment.course
-        msg = (
-            f"🎉 *Welcome to {course.course_name}!* \n\n"
+
+        header = f"🎉 Welcome to {course.course_name}!"
+        body = (
             f"{course.description}\n\n"
-            f"Duration: {course.duration_in_weeks} weeks\nLevel: {course.level}\n\n"
-            "Do you have any questions before we begin? Ask now, or type READY to start!"
+            f"📅 Duration: {course.duration_in_weeks} weeks\n"
+            f"🎯 Level: {course.level}\n\n"
         )
-        self._send_message(user_waid, msg)
+        footer = "Powered by Nikkoworkx"
+
+        buttons = [
+            {"id": "continue", "title": "🚀 Let’s begin"},
+        ]
+
+        try:
+            self.whatsapp_service.send_button_message(
+                phone_number_id=os.getenv("WHATSAPP_PHONE_NUMBER_ID"),
+                to=user_waid,
+                body=body,
+                buttons=buttons,
+                header=header,
+                footer=footer,
+            )
+        except Exception:
+            logger.exception("Failed to send course introduction with buttons")
+            # fallback to plain text
+            msg = (
+                f"🎉 *Welcome to {course.course_name}!* \n\n"
+                f"{course.description}\n\n"
+                f"Duration: {course.duration_in_weeks} weeks\n"
+                f"Level: {course.level}\n\n"
+                "Do you have any questions before we begin? "
+                "👉 Reply 'questions' or 'start'"
+            )
+            self._send_message(user_waid, msg)
 
     def _offer_quiz_or_content(self, user_waid: str, enrollment: UserEnrollment):
         next_module = enrollment.current_module
@@ -444,24 +606,20 @@ class CourseDeliveryManager:
                     self.complete_module_and_continue()
                     return
 
-        self._send_message(
-            user_waid,
-            f"✨ Coming up next in your learning path: *{next_module.title}* from the course *{enrollment.course.course_name}*.\n\n"
-            "You have two choices:\n\n"
-            "📝 *Type QUIZ* – Take a quick test. If you pass, you can skip this module.\n\n"
-            "📘 *Type MODULE* – Jump straight into the learning material.\n\n"
-            "👉 How would you like to continue?",
+        self.module_start_choice(
+            user_waid=user_waid, enrollment=enrollment, next_module=next_module
         )
 
         enrollment.conversation_state = "offer_quiz_or_content"
         enrollment.save()
 
     def send_module_content(self, user_waid, module):
-        message = f"📚 *{module.title}*\n\n{module.content}\n\nType 'Next' when you're ready for next topic."
+        message = f"📚 *{module.title}*\n\n{module.content}"
         self._send_message(user_waid, message)
+        self.send_universal_continue_reply(user_waid=user_waid)
 
     # ---- assessment and quiz functionalities ----
-    # Course skip quiz
+
     def start_module_quiz(self, user_waid, enrollment):
         # Note: implement fetching and starting quiz of type='quiz'
         self._send_message(
@@ -489,7 +647,6 @@ class CourseDeliveryManager:
             print("[No Quiz found]")
             self._send_message(user_waid, "No quiz available for this module.")
 
-    # Start module assessment
     def start_module_assessment(self, user_waid, enrollment):
         # Note: implement fetching and starting quiz of type='quiz'
         self._send_message(
@@ -531,14 +688,14 @@ class CourseDeliveryManager:
             if not enrollment:
                 logger.warning(f"No active enrollment for user {user_waid}")
                 self._send_message(
-                    user_waid, "⚠️ No active assessment. Type 'MENU' to see options."
+                    user_waid, "⚠️ No active assessment. Type 'Home' to see options."
                 )
                 return
 
             if not enrollment.current_assessment_attempt:
                 logger.warning(f"No active assessment attempt for user {user_waid}")
                 self._send_message(
-                    user_waid, "⚠️ No active assessment. Type 'MENU' to see options."
+                    user_waid, "⚠️ No active assessment. Type 'Home' to see options."
                 )
                 return
 
@@ -678,8 +835,8 @@ class CourseDeliveryManager:
                 enrollment.conversation_state = "offer_quiz_or_content"
                 enrollment.save()
 
-                message += "Would you like to try again? (Reply YES or NO)"
                 self._send_message(user_waid, message)
+                self.assessment_retry_messsage(user_waid=user_waid)
 
         except Exception as e:
             logger.exception(f"Failed to complete assessment for {user_waid}")
@@ -788,9 +945,9 @@ class CourseDeliveryManager:
                     print("[DEBUG] No more topics left in module.")
                     self._send_message(
                         user_waid,
-                        f"✅ You’ve completed all topics in *{module.title}*!\n\n"
-                        "Type 'Assessment' to start the module assessment.",
+                        f"✅ You’ve completed all topics in *{module.title}*!\n\n",
                     )
+                    self.send_universal_assessment_reply(user_waid=user_waid)
                     return
 
                 topic_delivery_progress = (
@@ -832,11 +989,9 @@ class CourseDeliveryManager:
             print(
                 f"[DEBUG] Sending paragraph: id={paragraph.paragraph_id}, order={paragraph.order}"
             )
-            message = (
-                f"📖 *{current_topic.title}*\n\n{paragraph.content}\n\n"
-                "Type 'Continue' for next or 'Repeat' to see again."
-            )
+            message = f"📖 *{current_topic.title}*\n\n{paragraph.content}\n\n"
             self._send_message(user_waid, message)
+            self.send_universal_continue_reply(user_waid=user_waid)
         elif (
             topic_delivery_progress
             and topic_delivery_progress.state == "content_delivered"
@@ -855,9 +1010,9 @@ class CourseDeliveryManager:
                 print(f"[DEBUG] All content in module={module.title} delivered.")
                 self._send_message(
                     user_waid,
-                    f"✅ You’ve completed all topics in *{module.title}*!\n\n"
-                    "Type 'Assessment' to start the module assessment.",
+                    f"✅ You’ve completed all topics in *{module.title}*!\n\n",
                 )
+                self.send_universal_assessment_reply(user_waid=user_waid)
 
     def complete_module_and_continue(self, user_waid: str, module: Module) -> None:
         """Complete the current module and move to the next one"""
@@ -932,7 +1087,6 @@ class CourseDeliveryManager:
             # Send completion message
             message = f"🎉 *Course Completed!*\n\n"
             message += f"Congratulations on completing course: {enrollment.course.course_name}!\n\n"
-            message += "Type 'COURSES' to see other available courses."
 
             self._send_message(user_waid, message)
 
@@ -949,7 +1103,7 @@ class CourseDeliveryManager:
                     f"Dear {user.full_name},\n\n"
                     f"Congratulations on completing the course *{enrollment.course.course_name}*!\n\n"
                     "Attached is your certificate of completion.\n\n"
-                    "Keep learning!\nWAppStudy Team"
+                    "Keep learning!\n Nikkoworkx Team"
                 )
 
                 temp_file_path = None
@@ -982,7 +1136,164 @@ class CourseDeliveryManager:
                 user_waid, "⚠️ Failed to complete course. Please contact support."
             )
 
-    # -- Fallbacks and utility handlers --
+    # ----- move backward in course ------
+    def step_back(self, enrollment: UserEnrollment, user_waid: str) -> None:
+        current_module = enrollment.current_module
+        if not current_module:
+            self._send_message(user_waid, "⚠️ No active module found.")
+            return
+
+        module_progress = self.module_delivery_service.get_progress(
+            enrollment=enrollment, module=current_module
+        )
+        if not module_progress:
+            self._send_message(user_waid, "⚠️ No module progress found.")
+            return
+
+        module_state = module_progress.state
+
+        # Case 1: Not started → ask user to select/change module
+        if module_state == "not_started":
+            self._send_message(
+                user_waid,
+                "⚠️ You haven’t started this module yet.",
+            )
+            self.send_universal_continue_reply(user_waid=user_waid)
+            return
+
+        # Case 2: Delivering content
+        if module_state == "content_delivering":
+            current_topic = module_progress.current_topic
+            if not current_topic:
+                self._send_message(user_waid, "⚠️ No current topic found.")
+                return
+
+            topic_progress = self.module_delivery_service.get_topic_progress(
+                enrollment=enrollment, topic=current_topic
+            )
+            if not topic_progress:
+                self._send_message(user_waid, "⚠️ No topic progress found.")
+                return
+
+            topic_state = topic_progress.state
+
+            # Subcase A: Topic not started → go to last paragraph of previous topic
+            if topic_state == "not_started":
+                prev_topic = (
+                    current_module.topics.filter(
+                        order__lt=current_topic.order, is_active=True
+                    )
+                    .order_by("-order")
+                    .first()
+                )
+                if prev_topic:
+                    last_para = prev_topic.paragraphs.order_by("-order").first()
+                    if last_para:
+                        topic_progress = (
+                            self.module_delivery_service.get_or_create_topic_progress(
+                                enrollment, prev_topic
+                            )
+                        )
+                        topic_progress.current_paragraph = last_para
+                        topic_progress.state = "content_delivering"
+                        topic_progress.save()
+                        message = f"📖 *{prev_topic.title}*\n\n{last_para.content}"
+                        self._send_message(user_waid, message)
+                        self.send_universal_continue_reply(user_waid=user_waid)
+                        module_progress.current_topic = prev_topic
+                        module_progress.state = "content_delivering"
+                        module_progress.save()
+                        return
+                self._send_message(
+                    user_waid, "⚠️ No previous topic available in this module."
+                )
+                return
+
+            # Subcase B: Topic delivering → step to previous paragraph
+            if topic_state == "content_delivering":
+                current_para = topic_progress.current_paragraph
+                if current_para:
+                    prev_para = (
+                        current_topic.paragraphs.filter(order__lt=current_para.order)
+                        .order_by("-order")
+                        .first()
+                    )
+                    if prev_para:
+                        topic_progress.current_paragraph = prev_para
+                        if prev_para.order == 1:
+                            topic_progress.state = "not_started"
+                        topic_progress.save()
+                        message = f"📖 *{current_topic.title}*\n\n{prev_para.content}"
+                        self._send_message(user_waid, message)
+                        self.send_universal_continue_reply(user_waid=user_waid)
+                        return
+                    else:
+                        # no previous paragraph → fallback to last paragraph of previous topic
+                        prev_topic = (
+                            current_module.topics.filter(
+                                order__lt=current_topic.order, is_active=True
+                            )
+                            .order_by("-order")
+                            .first()
+                        )
+                        if prev_topic:
+                            last_para = prev_topic.paragraphs.order_by("-order").first()
+                            if last_para:
+                                topic_progress = self.module_delivery_service.get_or_create_topic_progress(
+                                    enrollment, prev_topic
+                                )
+                                topic_progress.current_paragraph = last_para
+                                topic_progress.save()
+                                message = (
+                                    f"📖 *{prev_topic.title}*\n\n{last_para.content}"
+                                )
+                                self._send_message(user_waid, message)
+                                self.send_universal_continue_reply(user_waid=user_waid)
+                                return
+                self._send_message(user_waid, "⚠️ No previous content available.")
+                return
+
+            # Subcase C: Topic delivered → show last paragraph of that topic
+            if topic_state == "content_delivered":
+                last_para = current_topic.paragraphs.order_by("-order").first()
+                if last_para:
+                    topic_progress.current_paragraph = last_para
+                    topic_progress.state = "content_delivering"
+                    topic_progress.save()
+                    message = f"📖 *{current_topic.title}*\n\n{last_para.content}"
+                    self._send_message(user_waid, message)
+                    self.send_universal_continue_reply(user_waid=user_waid)
+                else:
+                    self._send_message(user_waid, "⚠️ No paragraphs in this topic.")
+                return
+
+        # Case 3: Module fully delivered → go to last topic + last paragraph
+        if module_state == "content_delivered":
+            last_topic = (
+                current_module.topics.filter(is_active=True).order_by("-order").first()
+            )
+            if last_topic:
+                last_para = last_topic.paragraphs.order_by("-order").first()
+                if last_para:
+                    topic_progress = (
+                        self.module_delivery_service.get_or_create_topic_progress(
+                            enrollment, last_topic
+                        )
+                    )
+                    topic_progress.current_paragraph = last_para
+                    topic_progress.state = "content_delivering"
+                    topic_progress.save()
+                    module_progress.current_topic = last_topic
+                    module_progress.state = "content_delivering"
+                    module_progress.save()
+                    message = f"📖 *{last_topic.title}*\n\n{last_para.content}"
+                    self._send_message(user_waid, message)
+                    self.send_universal_assessment_reply(user_waid=user_waid)
+                    return
+            self._send_message(user_waid, "⚠️ No previous content available.")
+            return
+
+    # ---- Fallbacks and utility handlers ----
 
     def _handle_no_active_enrollment(self, user_waid, user):
         enrollments = self.enrollment_service.get_user_enrollments(user=user)
@@ -1000,7 +1311,7 @@ class CourseDeliveryManager:
         #     self._send_message(user_waid, message)
         # else:
         message = (
-            f"👋 Hello {user.whatsapp_name},\n\n"
+            f"👋 Hello {user.full_name},\n\n"
             "You're not enrolled in any courses yet.\n\n"
         )
         self._send_message(user_waid, message)
@@ -1010,3 +1321,215 @@ class CourseDeliveryManager:
         self.whatsapp_service.send_message(
             phone_number_id=self.phone_number_id, to=user_waid, message=message
         )
+
+    # --- universal replies ----
+
+    def send_universal_continue_reply(
+        self, user_waid: str, include_next: bool = True, include_prev: bool = True
+    ) -> None:
+        """Send a universal reply with WhatsApp interactive buttons instead of plain text"""
+        buttons = []
+
+        if include_next:
+            buttons.append({"id": "next", "title": "➡️ Next"})
+
+        if include_prev:
+            buttons.append({"id": "prev", "title": "⬅️ Previous"})
+
+        # always include home
+        buttons.append({"id": "home", "title": "🏠 Home"})
+
+        body = "Choose an option 👇"
+        footer = "Powered by Nikkoworkx"
+
+        try:
+            self.whatsapp_service.send_button_message(
+                phone_number_id=os.getenv("WHATSAPP_PHONE_NUMBER_ID"),
+                to=user_waid,
+                body=body,
+                buttons=buttons,
+                footer=footer,
+            )
+        except Exception as e:
+            logger.exception("Failed to send universal reply buttons")
+            # fallback to text if buttons fail
+            self._send_message(
+                user_waid=user_waid, message="Reply NEXT / PREVIOUS / HOME"
+            )
+
+    def send_universal_assessment_reply(self, user_waid: str) -> None:
+        """Send a universal reply with WhatsApp interactive buttons instead of plain text"""
+        buttons = [
+            {"id": "assessment", "title": "🧪 Assessment"},
+            {"id": "prev", "title": "⬅️ Previous"},
+            {"id": "home", "title": "🏠 Home"},
+        ]
+
+        body = "Choose an option 👇"
+        footer = "Powered by Nikkoworkx"
+
+        try:
+            self.whatsapp_service.send_button_message(
+                phone_number_id=os.getenv("WHATSAPP_PHONE_NUMBER_ID"),
+                to=user_waid,
+                body=body,
+                buttons=buttons,
+                footer=footer,
+            )
+        except Exception as e:
+            logger.exception("Failed to send universal reply buttons")
+            # fallback to text if buttons fail
+            self._send_message(
+                user_waid=user_waid, message="Reply NEXT / PREVIOUS / HOME"
+            )
+
+    def send_universal_ready_reply(self, user_waid: str) -> None:
+        """Send a universal reply with WhatsApp interactive buttons instead of plain text"""
+        buttons = [
+            {"id": "ready", "title": "📗 Ready"},
+            {"id": "home", "title": "🏠 Home"},
+        ]
+
+        body = "Choose an option 👇"
+        footer = "Powered by Nikkoworkx"
+
+        try:
+            self.whatsapp_service.send_button_message(
+                phone_number_id=os.getenv("WHATSAPP_PHONE_NUMBER_ID"),
+                to=user_waid,
+                body=body,
+                buttons=buttons,
+                footer=footer,
+            )
+        except Exception as e:
+            logger.exception("Failed to send universal reply buttons")
+            # fallback to text if buttons fail
+            self._send_message(
+                user_waid=user_waid, message="Reply NEXT / PREVIOUS / HOME"
+            )
+
+    def send_universal_home_reply(self, user_waid: str, header: str) -> None:
+        body = "Choose one of the options below 👇"
+        footer = "Powered by Nikkoworkx"
+
+        buttons = [
+            {"id": "course-intro", "title": "📘 Course Intro"},
+            {"id": "course-progress", "title": "📊 Course Progress"},
+            {"id": "continue", "title": "▶️ Continue Learning"},
+        ]
+
+        try:
+            self.whatsapp_service.send_button_message(
+                phone_number_id=os.getenv("WHATSAPP_PHONE_NUMBER_ID"),
+                to=user_waid,
+                body=body,
+                buttons=buttons,
+                header=header,
+                footer=footer,
+            )
+        except Exception:
+            logger.exception("Failed to send home menu buttons")
+
+            if header:
+                message = f"{header}\n\n"
+            # fallback plain message
+            message += (
+                "Here’s what you can do:\n"
+                "1️⃣ View *Course Intro*\n"
+                "2️⃣ Check *Course Progress*\n"
+                "3️⃣ *Continue Learning* from where you left off\n\n"
+                "👉 Reply with:\n"
+                "- 'course intro' to see the intro\n"
+                "- 'course progress' to check your progress\n"
+                "- 'continue' to resume your course"
+            )
+            self._send_message(user_waid=user_waid, message=message)
+        return
+
+    def assessment_retry_messsage(self, user_waid: str) -> None:
+        """Send a reply with WhatsApp interactive buttons instead of plain text"""
+        buttons = [
+            {"id": "assessment", "title": "🧪 Retry Assessment"},
+            {"id": "module", "title": "📖 Module"},
+            {"id": "home", "title": "🏠 Home"},
+        ]
+
+        body = "You want to retry the Assessment or go to Module."
+        footer = "Powered by Nikkoworkx"
+
+        try:
+            self.whatsapp_service.send_button_message(
+                phone_number_id=os.getenv("WHATSAPP_PHONE_NUMBER_ID"),
+                to=user_waid,
+                body=body,
+                buttons=buttons,
+                footer=footer,
+            )
+        except Exception as e:
+            logger.exception("Failed to send universal reply buttons")
+            # fallback to text if buttons fail
+            self._send_message(
+                user_waid=user_waid, message="Reply NEXT / PREVIOUS / HOME"
+            )
+
+    def module_start_choice(self, user_waid: str, enrollment, next_module) -> None:
+        """Send next module choice as WhatsApp interactive buttons"""
+        header = f"✨ Coming up next: {next_module.title}"
+        body = (
+            f"Course: *{enrollment.course.course_name}*\n\n"
+            "You have two choices:\n\n"
+            "📝 Take a quick *Quiz* – If you pass, you can skip this module.\n\n"
+            "📘 Go to *Module* – Jump straight into the learning material.\n\n"
+            "👉 How would you like to continue?"
+        )
+        footer = "Powered by Nikkoworkx"
+
+        buttons = [
+            {"id": "quiz", "title": "📝 Quiz"},
+            {"id": "module", "title": "📘 Module"},
+        ]
+
+        try:
+            WhatsAppService.send_button_message(
+                phone_number_id=os.getenv("WHATSAPP_PHONE_NUMBER_ID"),
+                to=user_waid,
+                body=body,
+                buttons=buttons,
+                header=header,
+                footer=footer,
+            )
+        except Exception:
+            logger.exception("Failed to send next module choice buttons")
+            # fallback to plain message
+            self._send_message(
+                user_waid,
+                f"✨ Coming up next in your learning path: *{next_module.title}* "
+                f"from the course *{enrollment.course.course_name}*.\n\n"
+                "You have two choices:\n\n"
+                "📝 *Type QUIZ* – Take a quick test. If you pass, you can skip this module.\n\n"
+                "📘 *Type MODULE* – Jump straight into the learning material.\n\n"
+                "👉 How would you like to continue?",
+            )
+
+    def _send_course_intro_continue(self, user_waid: str) -> None:
+        body = "Choose an option to continue"
+
+        buttons = [
+            {"id": "continue", "title": "➡️ Continue"},
+        ]
+
+        try:
+            WhatsAppService.send_button_message(
+                phone_number_id=os.getenv("WHATSAPP_PHONE_NUMBER_ID"),
+                to=user_waid,
+                body=body,
+                buttons=buttons,
+                header="",
+            )
+        except Exception:
+            logger.exception("Failed to send continue button")
+            # fallback plain text
+            self._send_message(
+                user_waid,
+                "You're currently in the course introduction. To move ahead, reply with 'CONTINUE'.",
+            )

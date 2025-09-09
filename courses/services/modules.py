@@ -1,7 +1,7 @@
 import logging
 import uuid
-from courses.models import Course, Module, Topic
-from .topics import TopicService  
+from courses.models import Course, Module, Topic, TopicParagraph
+from .topics import TopicService
 from typing import Dict, Any, Optional
 from django.db.models import Max
 from django.db import transaction
@@ -11,9 +11,9 @@ logger = logging.getLogger(__name__)
 
 class ModuleService:
     @classmethod
-    def to_dict(cls, module,  include_topics: bool = False):
+    def to_dict(cls, module, include_topics: bool = False):
         """Convert Module model instance to dictionaryoptionally including topics"""
-        module_dict =  {
+        module_dict = {
             "moduleId": module.module_id,
             "courseId": module.course.course_id,
             "title": module.title,
@@ -22,14 +22,14 @@ class ModuleService:
             "createdAt": module.created_at,
             "updatedAt": module.updated_at,
         }
-        
+
         if include_topics:
-                    topics_result = TopicService.get_topics_by_module(str(module.module_id))
-                    if topics_result["success"]:
-                        module_dict["topics"] = topics_result["data"]
-                    else:
-                        module_dict["topics"] = []
-                        
+            topics_result = TopicService.get_topics_by_module(str(module.module_id))
+            if topics_result["success"]:
+                module_dict["topics"] = topics_result["data"]
+            else:
+                module_dict["topics"] = []
+
         return module_dict
 
     @classmethod
@@ -111,18 +111,21 @@ class ModuleService:
                         else:
                             # if client sends "false"/"true" strings also handle that defensively
                             if isinstance(raw_is_active, str):
-                                is_active_val = raw_is_active.lower() in ("1", "true", "yes")
+                                is_active_val = raw_is_active.lower() in (
+                                    "1",
+                                    "true",
+                                    "yes",
+                                )
                             else:
                                 is_active_val = bool(raw_is_active)
-                        
-                        
+
                         normalized.append(
                             {
                                 "topicId": item.get("topicId") or item.get("topic_id"),
                                 "title": item.get("title", "") or "",
                                 "content": item.get("content", "") or "",
                                 "order": item.get("order"),
-                                "is_active":is_active_val,
+                                "is_active": is_active_val,
                             }
                         )
 
@@ -142,12 +145,16 @@ class ModuleService:
                     # Optionally delete topics that exist on server but not in provided list
                     # Only perform deletion if the request included at least one existing topic id
                     if provided_existing_ids:
-                        to_delete = existing_qs.exclude(topic_id__in=provided_existing_ids)
+                        to_delete = existing_qs.exclude(
+                            topic_id__in=provided_existing_ids
+                        )
                         if to_delete.exists():
                             to_delete.delete()
 
                     # To avoid unique order conflicts, compute a safe temp base:
-                    current_max = existing_qs.aggregate(max_order=Max("order"))["max_order"] or 0
+                    current_max = (
+                        existing_qs.aggregate(max_order=Max("order"))["max_order"] or 0
+                    )
                     temp_base = int(current_max) + len(normalized) + 5
 
                     # Phase: create/update all mapped topics with unique high orders
@@ -158,7 +165,9 @@ class ModuleService:
                         if t_id:
                             # update (only if topic belongs to module)
                             try:
-                                Topic.objects.filter(topic_id=t_id, module=module).update(
+                                Topic.objects.filter(
+                                    topic_id=t_id, module=module
+                                ).update(
                                     title=it["title"],
                                     content=it["content"],
                                     is_active=it["is_active"],
@@ -177,7 +186,10 @@ class ModuleService:
                                     is_active=it["is_active"],
                                 )
                             except Exception:
-                                logger.exception("Failed creating topic for module %s", module.module_id)
+                                logger.exception(
+                                    "Failed creating topic for module %s",
+                                    module.module_id,
+                                )
 
                     # Finalize: renumber to contiguous 1..N (TopicService helper)
                     TopicService._renumber_topics(module)
@@ -194,9 +206,7 @@ class ModuleService:
         except Exception as e:
             logger.exception(f"Error creating/updating module {module_id}")
             return {"success": False, "data": None, "error": str(e)}
-    
-    
-    
+
     @classmethod
     def delete_module(cls, module_id):
         """Delete a module"""
@@ -215,7 +225,12 @@ class ModuleService:
             return {"success": False, "error": str(e)}
 
     @classmethod
-    def duplicate_module(cls, module_id: str, dest_course_id: Optional[str] = None, include_topics: bool = True) -> Dict:
+    def duplicate_module(
+        cls,
+        module_id: str,
+        dest_course_id: Optional[str] = None,
+        include_topics: bool = True,
+    ) -> Dict:
         """
         Duplicate a module. If dest_course_id is provided, duplicate into that course,
         otherwise duplicate into the same course.
@@ -235,7 +250,12 @@ class ModuleService:
 
             with transaction.atomic():
                 # determine order in destination course
-                current_max = Module.objects.filter(course=dest_course).aggregate(max_order=Max("order"))["max_order"] or 0
+                current_max = (
+                    Module.objects.filter(course=dest_course).aggregate(
+                        max_order=Max("order")
+                    )["max_order"]
+                    or 0
+                )
                 new_order = int(current_max) + 1
 
                 duplicated_module = Module.objects.create(
@@ -247,20 +267,35 @@ class ModuleService:
 
                 if include_topics:
                     # duplicate topics in the same relative order
-                    src_topics = Topic.objects.filter(module=src_module).order_by("order")
+                    src_topics = Topic.objects.filter(module=src_module).order_by(
+                        "order"
+                    )
                     for t_idx, t in enumerate(src_topics, start=1):
-                        Topic.objects.create(
+                        duplicated = Topic.objects.create(
                             module=duplicated_module,
                             title=t.title,
-                            content=t.content,
-                            order=t_idx,  # start from 1 for the new module
+                            order=t_idx,
                             is_active=t.is_active,
                         )
+
+                        # create new duplicated paragraphs in new topic
+                        paragraphs = t.paragraphs.all()
+
+                        print(f"Para graphs under topics: ", paragraphs)
+                        if paragraphs:
+                            for idx, para in enumerate(paragraphs, start=1):
+                                TopicParagraph.objects.create(
+                                    topic=duplicated, content=para.content, order=idx
+                                )
 
                     # renumber to be safe
                     TopicService._renumber_topics(duplicated_module)
 
-            return {"success": True, "data": cls.to_dict(duplicated_module, include_topics=True), "message": "Module duplicated successfully"}
+            return {
+                "success": True,
+                "data": cls.to_dict(duplicated_module, include_topics=True),
+                "message": "Module duplicated successfully",
+            }
         except Module.DoesNotExist:
             return {"success": False, "data": None, "error": "Source module not found"}
         except Exception as e:

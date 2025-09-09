@@ -25,13 +25,7 @@ class OrientationManager:
 
     # Define orientation steps - can be messages or questions
     ORIENTATION_STEPS = [
-        {
-            "type": "message",
-            "content": "📘 *Welcome to the Orientation!*\n\nHere are a few things you can do:\n"
-            "- Type *HELP* for assistance.\n"
-            "- Type *COURSES* to see available courses.\n"
-            "- Type *PROGRESS* to view your progress.",
-        },
+        {"type": "message", "content": "📘 *Welcome to the Orientation!*"},
         {
             "type": "message",
             "content": "Let's get started by choosing a course. Here are your options:",

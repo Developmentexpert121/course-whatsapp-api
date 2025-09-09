@@ -160,6 +160,131 @@ class WhatsAppService:
             raise
 
     @staticmethod
+    async def async_send_list_message(
+        phone_number_id: str,
+        to: str,
+        header: str,
+        body: str,
+        footer: str,
+        button_text: str,
+        sections: list[dict],
+    ) -> httpx.Response:
+        """
+        Send a WhatsApp interactive list message asynchronously.
+
+        sections example:
+        [
+            {
+                "title": "Account Services",
+                "rows": [
+                    {"id": "check_balance", "title": "💰 Check Balance", "description": "View balance"},
+                    {"id": "recent_txn", "title": "📜 Recent Transactions", "description": "See last 5"}
+                ]
+            },
+            {
+                "title": "Support",
+                "rows": [
+                    {"id": "contact_agent", "title": "👨‍💻 Talk to Agent", "description": "Human support"}
+                ]
+            }
+        ]
+        """
+        try:
+            access_token = os.getenv("WHATSAPP_ACCESS_TOKEN")
+            if not access_token:
+                raise ValueError("WHATSAPP_ACCESS_TOKEN not configured")
+
+            payload = {
+                "messaging_product": "whatsapp",
+                "to": to,
+                "type": "interactive",
+                "interactive": {
+                    "type": "list",
+                    "header": {"type": "text", "text": header},
+                    "body": {"text": body},
+                    "footer": {"text": footer},
+                    "action": {"button": button_text, "sections": sections},
+                },
+            }
+
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.post(
+                    f"https://graph.facebook.com/v22.0/{phone_number_id}/messages",
+                    json=payload,
+                    headers={
+                        "Authorization": f"Bearer {access_token}",
+                        "Content-Type": "application/json",
+                    },
+                )
+                response.raise_for_status()
+                return response
+        except Exception:
+            logger.exception("Error sending WhatsApp list message")
+            raise
+
+    @staticmethod
+    async def async_send_button_message(
+        phone_number_id: str,
+        to: str,
+        body: str,
+        buttons: list[dict],
+        header: str = None,
+        footer: str = None,
+    ) -> httpx.Response:
+        """
+        Send a WhatsApp interactive button message asynchronously.
+
+        buttons example (max 3):
+        [
+            {"id": "check_status", "title": "📦 Check Status"},
+            {"id": "talk_agent", "title": "💬 Talk to Agent"}
+        ]
+        """
+        try:
+            access_token = os.getenv("WHATSAPP_ACCESS_TOKEN")
+            if not access_token:
+                raise ValueError("WHATSAPP_ACCESS_TOKEN not configured")
+
+            # Build button objects
+            button_objects = [
+                {"type": "reply", "reply": {"id": b["id"], "title": b["title"]}}
+                for b in buttons[:3]
+            ]
+
+            interactive = {
+                "type": "button",
+                "body": {"text": body},
+                "action": {"buttons": button_objects},
+            }
+
+            if header:
+                interactive["header"] = {"type": "text", "text": header}
+            if footer:
+                interactive["footer"] = {"text": footer}
+
+            payload = {
+                "messaging_product": "whatsapp",
+                "to": to,
+                "type": "interactive",
+                "interactive": interactive,
+            }
+
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.post(
+                    f"https://graph.facebook.com/v22.0/{phone_number_id}/messages",
+                    json=payload,
+                    headers={
+                        "Authorization": f"Bearer {access_token}",
+                        "Content-Type": "application/json",
+                    },
+                )
+                response.raise_for_status()
+                return response
+        except Exception:
+            logger.exception("Error sending WhatsApp button message")
+            raise
+
+    @staticmethod
     def send_message(phone_number_id: str, to: str, message: str) -> httpx.Response:
         """Synchronously send a WhatsApp message"""
         try:
@@ -219,6 +344,49 @@ class WhatsAppService:
                     to=to,
                     images=images,
                     message=message,
+                )
+            )
+        finally:
+            loop.close()
+
+    @staticmethod
+    def send_list_message(
+        phone_number_id: str,
+        to: str,
+        header: str,
+        body: str,
+        footer: str,
+        button_text: str,
+        sections: list[dict],
+    ) -> httpx.Response:
+        """Synchronously send a WhatsApp interactive list message"""
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            return loop.run_until_complete(
+                WhatsAppService.async_send_list_message(
+                    phone_number_id, to, header, body, footer, button_text, sections
+                )
+            )
+        finally:
+            loop.close()
+
+    @staticmethod
+    def send_button_message(
+        phone_number_id: str,
+        to: str,
+        body: str,
+        buttons: list[dict],
+        header: str = None,
+        footer: str = None,
+    ) -> httpx.Response:
+        """Synchronously send a WhatsApp interactive button message"""
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            return loop.run_until_complete(
+                WhatsAppService.async_send_button_message(
+                    phone_number_id, to, body, buttons, header, footer
                 )
             )
         finally:
