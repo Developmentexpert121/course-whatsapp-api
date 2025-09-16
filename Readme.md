@@ -37,10 +37,12 @@ project-root/
 │     │── assessment_service.py      # Delivery & evaluation of assessments and quizzes
 │     │── course_delivery_manager.py # Orchestrates course, module, assessment, and certificate delivery
 │     │── certificates_service.py    # Certificate generation & delivery
+│     │── emailing_service.py        # Email sending services
 │     │── enrollment_service.py      # User enrollment logic
 │     │── messaging.py               # WhatsApp messaging utilities
 │     │── module_delivery_service.py # Module delivery & learner progress tracking
-│     │── onboarding_manager.py      # User onboarding flow (registration & orientation)
+│     │── onboarding_manager.py      # User onboarding flow (registration)
+│     │── onboarding_manager.py      # User Orentation flow (orientation: enroll ment of courses)
 │     │── post_course_manager.py     # Handles user progression to next course after completion
 │     │── user.py                    # CRUD operations for WhatsApp users
 │
@@ -52,6 +54,8 @@ project-root/
 │ └── services/   # Business logic layer for course management
 │     │── course_service.py     # CRUD operations for courses
 │     │── module_service.py     # CRUD operations for modules
+│     │── topic_service.py     # CRUD operations for topics
+│     │── image_service.py     # CRUD operations for images upload delete from s3
 │     │── assessment_service.py # CRUD operations for assessments & questions
 ```
 ## 🛠️ Setup & Installation
@@ -76,7 +80,7 @@ venv\Scripts\activate      # For Windows
 pip install -r requirements.txt
 ```
 
-### 4. Populate .env.local
+### 4. Populate .env.example
 
 
 ### 5. Apply Migrations

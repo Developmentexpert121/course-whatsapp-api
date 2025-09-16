@@ -66,17 +66,10 @@ class ModuleService:
     def create_or_update_module(cls, module_id, course_id, data: Dict[str, Any]):
         """Create or update a module. If `topics` array is present in `data`,
         sync topics for the created/updated module transactionally.
-
-        Expected topic item keys (frontend):
-          - topicId (optional): existing topic UUID string for updates
-          - title
-          - content (optional)
-          - order (optional)
-          - isActive (optional)
         """
         try:
             course = Course.objects.get(course_id=course_id)
-            # maintain previous behaviour (you were toggling course is_active earlier)
+            # keep previous behaviour
             course.is_active = False
             course.save()
 
@@ -91,107 +84,60 @@ class ModuleService:
                     },
                 )
 
-                # If frontend sent topics array, sync them
                 topics_payload = data.get("topics", None)
                 if isinstance(topics_payload, list):
-                    # Normalize items (dict with keys we expect)
-                    normalized = []
-                    for item in topics_payload:
-                        if not isinstance(item, dict):
-                            continue
-                        raw_is_active = None
-                        if "isActive" in item:
-                            raw_is_active = item.get("isActive")
-                        elif "is_active" in item:
-                            raw_is_active = item.get("is_active")
-
-                        # coerce to True/False (treat None as True)
-                        if raw_is_active is None:
-                            is_active_val = True
-                        else:
-                            # if client sends "false"/"true" strings also handle that defensively
-                            if isinstance(raw_is_active, str):
-                                is_active_val = raw_is_active.lower() in (
-                                    "1",
-                                    "true",
-                                    "yes",
-                                )
-                            else:
-                                is_active_val = bool(raw_is_active)
-
-                        normalized.append(
-                            {
-                                "topicId": item.get("topicId") or item.get("topic_id"),
-                                "title": item.get("title", "") or "",
-                                "content": item.get("content", "") or "",
-                                "order": item.get("order"),
-                                "is_active": is_active_val,
-                            }
-                        )
-
-                    # Fetch existing topic queryset for this module
-                    existing_qs = Topic.objects.filter(module=module)
-
-                    # Build set of provided existing ids (UUID objects)
+                    # collect provided existing ids
                     provided_existing_ids = set()
-                    for it in normalized:
-                        if it["topicId"]:
+                    for item in topics_payload:
+                        t_id = item.get("topicId") or item.get("topic_id")
+                        if t_id:
                             try:
-                                provided_existing_ids.add(uuid.UUID(str(it["topicId"])))
+                                provided_existing_ids.add(uuid.UUID(str(t_id)))
                             except Exception:
-                                # ignore invalid UUID formats (could log if desired)
                                 pass
 
-                    # Optionally delete topics that exist on server but not in provided list
-                    # Only perform deletion if the request included at least one existing topic id
+                    # optionally delete missing ones
                     if provided_existing_ids:
+                        existing_qs = Topic.objects.filter(module=module)
                         to_delete = existing_qs.exclude(
                             topic_id__in=provided_existing_ids
                         )
                         if to_delete.exists():
                             to_delete.delete()
 
-                    # To avoid unique order conflicts, compute a safe temp base:
-                    current_max = (
-                        existing_qs.aggregate(max_order=Max("order"))["max_order"] or 0
-                    )
-                    temp_base = int(current_max) + len(normalized) + 5
-
-                    # Phase: create/update all mapped topics with unique high orders
-                    # (so DB unique on (module, order) will not collide).
-                    for idx, it in enumerate(normalized, start=1):
-                        temp_order = temp_base + idx
-                        t_id = it.get("topicId")
-                        if t_id:
-                            # update (only if topic belongs to module)
-                            try:
-                                Topic.objects.filter(
-                                    topic_id=t_id, module=module
-                                ).update(
-                                    title=it["title"],
-                                    content=it["content"],
-                                    is_active=it["is_active"],
-                                    order=temp_order,
-                                )
-                            except Exception:
-                                logger.exception("Failed updating topic %s", t_id)
+                    # now create or update via TopicService logic
+                    for item in topics_payload:
+                        raw_is_active = (
+                            item.get("isActive")
+                            if "isActive" in item
+                            else item.get("is_active")
+                        )
+                        if raw_is_active is None:
+                            is_active_val = True
+                        elif isinstance(raw_is_active, str):
+                            is_active_val = raw_is_active.lower() in (
+                                "1",
+                                "true",
+                                "yes",
+                            )
                         else:
-                            # create new topic bound to module
-                            try:
-                                Topic.objects.create(
-                                    module=module,
-                                    title=it["title"],
-                                    content=it["content"],
-                                    order=temp_order,
-                                    is_active=it["is_active"],
-                                )
-                            except Exception:
-                                logger.exception(
-                                    "Failed creating topic for module %s",
-                                    module.module_id,
-                                )
+                            is_active_val = bool(raw_is_active)
 
-                    # Finalize: renumber to contiguous 1..N (TopicService helper)
+                        topic_data = {
+                            "title": item.get("title", ""),
+                            "content": item.get("content", ""),
+                            "is_active": is_active_val,
+                            "paragraphs": item.get(
+                                "paragraphs", []
+                            ),  # ✅ forward to topic method
+                        }
+                        TopicService.create_or_update_topic(
+                            module_id=module.module_id,
+                            topic_id=item.get("topicId") or item.get("topic_id"),
+                            data=topic_data,
+                        )
+
+                    # renumber after all updates
                     TopicService._renumber_topics(module)
 
             action = "created" if created else "updated"

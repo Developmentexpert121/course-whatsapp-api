@@ -869,9 +869,6 @@ class CourseDeliveryManager:
             print("[Starting next module]:", current_module.title)
 
             # Send the module content to the user
-            # self.module_delivery_service.mark_content_delivered(
-            #     enrollment=enrollment, module=current_module
-            # )
             self.send_module_content(user_waid, current_module)
             self.module_delivery_service.reset_progress(enrollment=enrollment)
 
@@ -1154,11 +1151,8 @@ class CourseDeliveryManager:
 
         # Case 1: Not started → ask user to select/change module
         if module_state == "not_started":
-            self._send_message(
-                user_waid,
-                "⚠️ You haven’t started this module yet.",
-            )
-            self.send_universal_continue_reply(user_waid=user_waid)
+            self.send_module_content(user_waid=user_waid, module=current_module)
+            self.send_universal_continue_reply(user_waid=user_waid, include_prev=False)
             return
 
         # Case 2: Delivering content
@@ -1204,9 +1198,13 @@ class CourseDeliveryManager:
                         module_progress.state = "content_delivering"
                         module_progress.save()
                         return
-                self._send_message(
-                    user_waid, "⚠️ No previous topic available in this module."
+                self.send_module_content(user_waid=user_waid, module=current_module)
+                self.send_universal_continue_reply(
+                    user_waid=user_waid, include_prev=False
                 )
+                module_progress.current_topic = current_topic
+                module_progress.state = "not_started"
+                module_progress.save()
                 return
 
             # Subcase B: Topic delivering → step to previous paragraph
@@ -1250,7 +1248,13 @@ class CourseDeliveryManager:
                                 self._send_message(user_waid, message)
                                 self.send_universal_continue_reply(user_waid=user_waid)
                                 return
-                self._send_message(user_waid, "⚠️ No previous content available.")
+                self.send_module_content(user_waid=user_waid, module=current_module)
+                self.send_universal_continue_reply(
+                    user_waid=user_waid, include_prev=False
+                )
+                module_progress.current_topic = current_topic
+                module_progress.state = "not_started"
+                module_progress.save()
                 return
 
             # Subcase C: Topic delivered → show last paragraph of that topic
@@ -1290,7 +1294,11 @@ class CourseDeliveryManager:
                     self._send_message(user_waid, message)
                     self.send_universal_assessment_reply(user_waid=user_waid)
                     return
-            self._send_message(user_waid, "⚠️ No previous content available.")
+            self.send_module_content(user_waid=user_waid, module=current_module)
+            self.send_universal_continue_reply(user_waid=user_waid, include_prev=False)
+            module_progress.current_topic = current_topic
+            module_progress.state = "not_started"
+            module_progress.save()
             return
 
     # ---- Fallbacks and utility handlers ----
