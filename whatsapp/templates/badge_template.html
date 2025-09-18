@@ -1,0 +1,31 @@
+<html>
+  <head>
+    <style>
+      @page {
+        size: 500px 500px; /* Match your SVG size */
+        margin: 0;
+        background: transparent;
+      }
+      html, body {
+        margin: 0;
+        padding: 0;
+        height: 100%;
+        background: transparent !important;
+      }
+      body {
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        background: transparent;
+      }
+      svg {
+        display: block;
+        width: 500px;
+        height: 500px;
+      }
+    </style>
+  </head>
+  <body>
+    {{ svg_code|safe }}
+  </body>
+</html>

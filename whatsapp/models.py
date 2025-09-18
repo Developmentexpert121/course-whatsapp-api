@@ -176,6 +176,8 @@ class UserEnrollment(models.Model):
         max_length=500, blank=True, null=True
     )  # Link to PDF in S3
 
+    badge_url = models.URLField(max_length=500, blank=True, null=True)
+
     introduction = models.CharField(
         max_length=20, choices=INTRO_CHOICES, default="not_started"
     )

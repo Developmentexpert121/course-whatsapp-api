@@ -170,45 +170,115 @@ class AIResponseInterpreter:
         Returns one of:
         'greeting', 'continue', 'quiz', 'module', 'question', 'cancel', 'unknown'
         """
-        # 4. 'quiz' - Requests a quiz or to be tested (e.g., "quiz me", "start quiz").
-        system_prompt = """You are an intent classifier for an educational WhatsApp bot.
-            Classify the user's message into exactly one of the following categories:
-
-            1. 'greeting' - General greetings, gratitude, or polite phrases (e.g., "hello", "thanks").
-            2. 'continue' - Signals readiness to move forward (e.g., "ready", "next", "go ahead").
-            3. 'Repeat' - Signals to send the same content again. (e.g., "repeat", "send again")
-            3. 'assessment' - Mentions assessments explicitly (e.g., "assessment", "test time").
-            5. 'module' - Requests specific learning content or lessons (e.g., "show module", "study material").
-            6. 'question' - Asks a question *about the course*, the module, the subject, or related topics (e.g., "what is this course about?", "does this cover science?").
-            7. 'cancel' - Wants to stop, pause, or cancel the interaction (e.g., "stop", "cancel", "exit").
-            8. 'unknown' - If the message doesn't clearly match any category.
-            9. 'prev' - If user ask for prev part (e.g., "prev", "last", "back").
-            10. 'home' - if user ask for home, main menu, menu, more options etc.
-            11. 'course-intro' - If user ask for course introduction (e.g., "intro").
-            12. 'course-progress' - If user ask for course progress (e.g., "progress", "my journey").
-
-            ONLY return one of: greeting, continue, assessment, quiz, module, question, cancel, prev, course-intro, course-progress, home, unknown.
-
-            Current conversation state: {current_state}
-            """
-
         try:
-            completion = self.client.chat.completions.create(
-                model="gpt-3.5-turbo",  # Fast and cost-effective for this task
-                messages=[
-                    {
-                        "role": "system",
-                        "content": system_prompt.format(current_state=current_state),
-                    },
-                    {"role": "user", "content": user_input},
-                ],
-                temperature=0.1,  # Low temperature for consistent results
-                max_tokens=10,
-            )
+            lower_user_input = user_input.lower().strip()
+            intent = None
 
-            intent = completion.choices[0].message.content.strip().lower()
+            # ✅ Exact match / keyword arrays
+            continues = [
+                "next",
+                "ready",
+                "continue",
+                "go ahead",
+                "move on",
+                "start",
+                "proceed",
+            ]
+            assessments = [
+                "assessment",
+                "quiz",
+                "test",
+                "exam",
+                "start quiz",
+                "start test",
+            ]
+            modules = ["module", "lesson", "study", "content", "chapter", "material"]
+            prevs = ["prev", "previous", "last", "back", "earlier"]
+            homes = ["home", "menu", "main menu", "options", "more options"]
+            intros = [
+                "intro",
+                "introduction",
+                "course intro",
+                "course-intro",
+                "course introduction",
+                "about course",
+            ]
+            progresses = [
+                "progress",
+                "status",
+                "my journey",
+                "course progress",
+                "course-progress",
+                "how am i doing",
+            ]
+            cancels = ["cancel", "stop", "exit", "quit", "end", "pause"]
 
-            print("AI content:", intent)
+            if lower_user_input in continues:
+                intent = "continue"
+            elif lower_user_input in assessments:
+                intent = "assessment"
+            elif lower_user_input in modules:
+                intent = "module"
+            elif lower_user_input in prevs:
+                intent = "prev"
+            elif lower_user_input in homes:
+                intent = "home"
+            elif lower_user_input in intros:
+                intent = "course-intro"
+            elif lower_user_input in progresses:
+                intent = "course-progress"
+            elif lower_user_input in cancels:
+                intent = "cancel"
+
+            if not intent:
+
+                # 4. 'quiz' - Requests a quiz or to be tested (e.g., "quiz me", "start quiz").
+                system_prompt = """You are an intent classifier for an educational WhatsApp bot.
+                    Classify the user's message into exactly one of the following categories:
+
+                    1. 'greeting' - General greetings, gratitude, or polite phrases (e.g., "hello", "thanks").
+                    2. 'continue' - Signals readiness to move forward (e.g., "ready", "next", "go ahead").
+                    3. 'Repeat' - Signals to send the same content again. (e.g., "repeat", "send again")
+                    3. 'assessment' - Mentions assessments explicitly (e.g., "assessment", "test time").
+                    5. 'module' - Requests specific learning content or lessons (e.g., "show module", "study material").
+                    6. 'question' - Asks a question *about the course*, the module, the subject, or related topics (e.g., "what is this course about?", "does this cover science?").
+                    7. 'cancel' - Wants to stop, pause, or cancel the interaction (e.g., "stop", "cancel", "exit").
+                    8. 'unknown' - If the message doesn't clearly match any category.
+                    9. 'prev' - If user ask for prev part (e.g., "prev", "last", "back").
+                    10. 'home' - if user ask for home, main menu, menu, more options etc.
+                    11. 'course-intro' - If user ask for course introduction (e.g., "intro").
+                    12. 'course-progress' - If user ask for course progress (e.g., "progress", "my journey").
+
+                    ONLY return one of: greeting, continue, assessment, quiz, module, question, cancel, prev, course-intro, course-progress, home, unknown.
+
+                    Current conversation state: {current_state}
+                    """
+
+                try:
+                    completion = self.client.chat.completions.create(
+                        model="gpt-3.5-turbo",  # Fast and cost-effective for this task
+                        messages=[
+                            {
+                                "role": "system",
+                                "content": system_prompt.format(
+                                    current_state=current_state
+                                ),
+                            },
+                            {"role": "user", "content": user_input},
+                        ],
+                        temperature=0.1,  # Low temperature for consistent results
+                        max_tokens=10,
+                    )
+
+                    intent = completion.choices[0].message.content.strip().lower()
+
+                    print("AI content:", intent)
+
+                except Exception as e:
+                    logger.exception(
+                        f"AI intent detection failed for input: {user_input}"
+                    )
+                    return "unknown"
             valid_intents = {
                 "greeting",
                 "continue",

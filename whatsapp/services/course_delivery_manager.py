@@ -574,7 +574,7 @@ class CourseDeliveryManager:
 
         try:
             self.whatsapp_service.send_button_message(
-                phone_number_id=os.getenv("WHATSAPP_PHONE_NUMBER_ID"),
+                phone_number_id=self.phone_number_id,
                 to=user_waid,
                 body=body,
                 buttons=buttons,
@@ -1076,6 +1076,10 @@ class CourseDeliveryManager:
                 enrollment=enrollment
             )
 
+            badge_url = self.ceritficates_service.generate_and_upload_badge(
+                enrollment=enrollment
+            )
+
             # Clear active enrollment
             user = enrollment.user
             user.active_enrollment = None
@@ -1093,6 +1097,12 @@ class CourseDeliveryManager:
                 file_url=certificate_url,
                 filename=f"certificate_{enrollment.course.course_name}",
             )
+            self.whatsapp_service.send_file(
+                self.phone_number_id,
+                user.whatsapp_id,
+                file_url=badge_url,
+                filename=f"badge_{enrollment.course.course_name}",
+            )
 
             if user.email:
                 subject = f"🎓 Your Certificate for {enrollment.course.course_name}"
@@ -1107,13 +1117,14 @@ class CourseDeliveryManager:
                 try:
                     # Download certificate locally
                     temp_file_path = download_temp_file(certificate_url, suffix=".pdf")
+                    temp_badge_path = download_temp_file(badge_url, suffix=".pdf")
 
                     # Send email with attachment
                     self.email_service.send_email_with_file(
                         subject=subject,
                         body=body,
                         to=[user.email],
-                        attachments=[temp_file_path],
+                        attachments=[temp_file_path, temp_badge_path],
                     )
 
                 except Exception:
@@ -1352,7 +1363,7 @@ class CourseDeliveryManager:
 
         try:
             self.whatsapp_service.send_button_message(
-                phone_number_id=os.getenv("WHATSAPP_PHONE_NUMBER_ID"),
+                phone_number_id=self.phone_number_id,
                 to=user_waid,
                 body=body,
                 buttons=buttons,
@@ -1378,7 +1389,7 @@ class CourseDeliveryManager:
 
         try:
             self.whatsapp_service.send_button_message(
-                phone_number_id=os.getenv("WHATSAPP_PHONE_NUMBER_ID"),
+                phone_number_id=self.phone_number_id,
                 to=user_waid,
                 body=body,
                 buttons=buttons,
@@ -1403,7 +1414,7 @@ class CourseDeliveryManager:
 
         try:
             self.whatsapp_service.send_button_message(
-                phone_number_id=os.getenv("WHATSAPP_PHONE_NUMBER_ID"),
+                phone_number_id=self.phone_number_id,
                 to=user_waid,
                 body=body,
                 buttons=buttons,
@@ -1428,7 +1439,7 @@ class CourseDeliveryManager:
 
         try:
             self.whatsapp_service.send_button_message(
-                phone_number_id=os.getenv("WHATSAPP_PHONE_NUMBER_ID"),
+                phone_number_id=self.phone_number_id,
                 to=user_waid,
                 body=body,
                 buttons=buttons,
@@ -1467,7 +1478,7 @@ class CourseDeliveryManager:
 
         try:
             self.whatsapp_service.send_button_message(
-                phone_number_id=os.getenv("WHATSAPP_PHONE_NUMBER_ID"),
+                phone_number_id=self.phone_number_id,
                 to=user_waid,
                 body=body,
                 buttons=buttons,
@@ -1482,8 +1493,8 @@ class CourseDeliveryManager:
 
     def module_start_choice(self, user_waid: str, enrollment, next_module) -> None:
         """Send next module choice as WhatsApp interactive buttons"""
-        header = f"✨ Coming up next: {next_module.title}"
         body = (
+            f"✨ Coming up next: *{next_module.title}*"
             f"Course: *{enrollment.course.course_name}*\n\n"
             "You have two choices:\n\n"
             "📝 Take a quick *Quiz* – If you pass, you can skip this module.\n\n"
@@ -1499,14 +1510,14 @@ class CourseDeliveryManager:
 
         try:
             WhatsAppService.send_button_message(
-                phone_number_id=os.getenv("WHATSAPP_PHONE_NUMBER_ID"),
+                phone_number_id=self.phone_number_id,
                 to=user_waid,
                 body=body,
                 buttons=buttons,
-                header=header,
                 footer=footer,
             )
-        except Exception:
+        except Exception as e:
+            print("Failed to send next module choice buttons:", e)
             logger.exception("Failed to send next module choice buttons")
             # fallback to plain message
             self._send_message(
@@ -1528,7 +1539,7 @@ class CourseDeliveryManager:
 
         try:
             WhatsAppService.send_button_message(
-                phone_number_id=os.getenv("WHATSAPP_PHONE_NUMBER_ID"),
+                phone_number_id=self.phone_number_id,
                 to=user_waid,
                 body=body,
                 buttons=buttons,
