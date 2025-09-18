@@ -6,6 +6,7 @@ from weasyprint import HTML
 from whatsapp_bot import settings
 from datetime import datetime
 from whatsapp.models import UserEnrollment
+import textwrap
 
 
 class CertificateService:
@@ -32,19 +33,53 @@ class CertificateService:
         return pdf_file.name  # Path to generated PDF
 
     @staticmethod
-    def generate_badge(student_name, badge_title, badge_date):
+    def wrap_text(text, max_width=30, max_font_size=36, min_font_size=14):
+        """
+        Wrap text into multiple lines and reduce font size if needed.
+        :param text: The text to wrap
+        :param max_width: Max characters per line before wrapping
+        :param max_font_size: Starting font size
+        :param min_font_size: Minimum font size to shrink to
+        :return: (lines, font_size)
+        """
+        # First try wrapping at max_width
+        lines = textwrap.wrap(text, width=max_width)
+
+        font_size = max_font_size
+        # If still too many lines, shrink font size
+        while len(lines) > 3 and font_size > min_font_size:  # Allow max 3 lines
+            font_size -= 2
+            lines = textwrap.wrap(
+                text, width=max_width + int((max_font_size - font_size) * 1.5)
+            )
+
+        return lines, font_size
+
+    @staticmethod
+    def generate_badge(self, student_name, badge_title, badge_date):
         """
         Generate a badge PDF with inline SVG.
         """
         if isinstance(badge_date, str):
-            badge_date = datetime.strptime(
-                badge_date, "%Y-%m-%d"
-            )  # adjust format if needed
+            badge_date = datetime.strptime(badge_date, "%Y-%m-%d")
 
         # Format date as dd-mm-yyyy
         formatted_date = badge_date.strftime("%d-%m-%Y")
 
-        # Your SVG code as a Python string
+        # Wrap and resize title
+        title_lines, title_font_size = CertificateService.wrap_text(badge_title)
+
+        # Build tspans for wrapped title
+        tspans = []
+        start_y = 280  # vertical starting point
+        line_height = title_font_size + 6
+        for i, line in enumerate(title_lines):
+            tspans.append(
+                f'<tspan x="50%" dy="{line_height if i > 0 else 0}">{line}</tspan>'
+            )
+        badge_title_svg = "".join(tspans)
+
+        # SVG with tspans
         svg_code = f"""
         <svg width="500" height="500" viewBox="0 0 500 500" xmlns="http://www.w3.org/2000/svg">
             <!-- Gradient Background Circle -->
@@ -72,9 +107,15 @@ class CertificateService:
             </g>
             <text x="56%" y="180" font-family="Arial, sans-serif" font-size="40" font-weight="bold" text-anchor="middle" fill="black">P</text>
             <text x="50%" y="205" font-family="Arial, sans-serif" font-size="19" text-anchor="middle" fill="black">FOUNDATION</text>
-            <text id="badgeTitle" x="50%" y="300" font-style="italic" font-family="Brush Script MT, cursive" font-size="36" text-anchor="middle" fill="black">{badge_title}</text>
-            <text x="50%" y="350" font-style="italic" font-family="Brush Script MT, cursive" font-size="22" text-anchor="middle" fill="black">Next Step Foundation</text>
-            <text id="badgeDate" x="50%" y="390" font-style="italic" font-family="Brush Script MT, cursive" font-size="22" text-anchor="middle" fill="black">{formatted_date}</text>
+            
+            <!-- Wrapped Title -->
+            <text id="badgeTitle" x="50%" y="{start_y}" font-style="italic" font-family="Brush Script MT, cursive"
+                  font-size="{title_font_size}" text-anchor="middle" fill="black">
+                {badge_title_svg}
+            </text>
+            
+            <text x="50%" y="380" font-style="italic" font-family="Brush Script MT, cursive" font-size="22" text-anchor="middle" fill="black">Next Step Foundation</text>
+            <text id="badgeDate" x="50%" y="420" font-style="italic" font-family="Brush Script MT, cursive" font-size="22" text-anchor="middle" fill="black">{formatted_date}</text>
         </svg>
         """
 
