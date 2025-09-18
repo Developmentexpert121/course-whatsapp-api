@@ -56,7 +56,7 @@ class CertificateService:
         return lines, font_size
 
     @staticmethod
-    def generate_badge(self, student_name, badge_title, badge_date):
+    def generate_badge(student_name, badge_title, badge_date):
         """
         Generate a badge PDF with inline SVG.
         """
